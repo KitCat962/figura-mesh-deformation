@@ -1,0 +1,8 @@
+{
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}/.vscode/docs/fake-bpy-module-3.4-20230117"
+  ],
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/.vscode/docs/fake-bpy-module-3.4-20230117"
+  ]
+}
