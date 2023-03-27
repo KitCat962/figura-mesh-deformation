@@ -2,13 +2,13 @@
 import bpy
 from uuid import uuid4 as newUUID
 bl_info = {
-    "name": "Cursor Array",
+    "name": "Export as Figura Avatar",
     "blender": (3, 4, 0),
     "category": "Object",
 }
 
 
-def validateGroupName(name: str):
+def fixGroupName(name: str):
     return name.replace(".", "").replace(" ", "_")
 
 
@@ -25,19 +25,38 @@ def fixUV(uv):
 
 
 def parseVertexGroups(meshObj):
-    vertGroupData = {}
-    for vertGroup in meshObj.vertex_groups:
-        vertGroupName = validateGroupName(vertGroup.name)
-        vertGroupData[vertGroupName] = []
-        for face in meshObj.data.polygons:
-            for vert in face.vertices:
-                weight = None
-                try:
-                    weight = vertGroup.weight(vert)
-                except:
-                    pass
-                vertGroupData[vertGroupName].append(weight)
-    return vertGroupData
+    return {fixGroupName(group.name): group.index for group in meshObj.vertex_groups}
+
+
+def parseVertexWeights(meshObj):
+    return {vert.index: {group.group: round(group.weight, 4) for group in vert.groups} for vert in meshObj.data.vertices}
+    vertWeights = {}
+    for vert in meshObj.data.vertices:
+        vertWeights[vert.index] = {}
+        for group in vert.groups:
+            vertWeights[vert.index][group.group] = round(group.weight, 4)
+
+    print(vertWeights)
+    return vertWeights
+    # for vertGroup in meshObj.vertex_groups:
+    #     vertGroupName = validateGroupName(vertGroup.name)
+    #     vertGroupData[vertGroupName] = []
+    #     for face in meshObj.data.polygons:
+    #         for vert in face.vertices:
+    #             try:
+    #                 weight = vertGroup.weight(vert)
+    #             except:
+    #                 weight = None
+    #             vertGroupData[vertGroupName].append(weight)
+    return vertWeights
+
+
+def parseVertexIndices(meshObj):
+    verts = [[] for _ in range(len(meshObj.data.vertices))]
+    for i, face in enumerate(meshObj.data.polygons):
+        for o, vert in enumerate(face.vertices):
+            verts[vert].append(i*(4)+o)
+    return verts
 
 
 def parseMesh(meshObj):
@@ -52,7 +71,7 @@ def parseMesh(meshObj):
 
 def parseBone(bone):
     return {
-        "name": validateGroupName(bone.name),
+        "name": fixGroupName(bone.name),
         "pos": fixAxis(bone.head_local),
         "children": [parseBone(child) for child in bone.children]
     }
@@ -88,6 +107,15 @@ def generateMesh(mesh):
     )
 
 
+def generateVertexGroupData(vertexGroups):
+    return "return {{{}}}".format(
+        ",".join('["{}"]={{{}}}'.format(
+            name,
+            ",".join((str(weight) if weight else "0") for weight in group)
+        ) for name, group in vertexGroups.items())
+    )
+
+
 def generateGroup(group):
     return ('{{"name":"{name}","origin":[{x},{y},{z}],"children":[{children}]}}').format(
         name=group["name"],
@@ -102,6 +130,26 @@ def generateBBmodel(mesh, groups):
     return ('{{"meta": {{"format_version": "4.5","model_format": "free","box_uv": false}},"name":"Avatar","resolution":{{"width":1,"height":1}},"elements":[{mesh}],"outliner":[{outliner}]}}').format(
         outliner=",".join(outliner),
         mesh=generateMesh(mesh)
+    )
+
+
+def generateVertexIndexMap(vertexMap):
+    return "{{{}}}".format(",".join("[{}]={{{}}}".format(index+1, ",".join(str(i+1) for i in verts)) for index, verts in enumerate(vertexMap)))
+
+
+def generateVertexGroups(groupWeights):
+    return "{{{}}}".format(",".join("[{}]={{{}}}".format(index+1, ",".join("[{}]={}".format(group+1, weight) for group, weight in weights.items())) for index, weights in groupWeights.items()))
+
+
+def generateGroupMap(groupMap):
+    return "{{{}}}".format(",".join('["{}"]={}'.format(name, index+1) for name, index in groupMap.items()))
+
+
+def generateScript(vertexMap, groups, groupMap):
+    return "return {{vertexMap={},groups={},groupMap={}}}".format(
+        generateVertexIndexMap(vertexMap),
+        generateVertexGroups(groups),
+        generateGroupMap(groupMap)
     )
 
 
@@ -121,12 +169,20 @@ class ExportBlockBench(bpy.types.Operator):
         if not armature:
             return {'CANCELLED'}
 
-        groups = parseArmature(armature)
+        boneTree = parseArmature(armature)
         vertexGroups = parseVertexGroups(meshObj)
         mesh = parseMesh(meshObj)
         # print(mesh)
+        # print(generateVertexGroupData(vertexGroups))
 
-        print(generateBBmodel(mesh, groups))
+        # print(generateBBmodel(mesh, groups))
+        vertMap, groupWeights, groupMap = parseVertexIndices(
+            meshObj), parseVertexWeights(meshObj), parseVertexGroups(meshObj)
+        print("vertIndex ", vertMap)
+        print("vertWeights ", groupWeights)
+        print("vertGroups ", groupMap)
+        print()
+        print(generateScript(vertMap, groupWeights, groupMap))
         return {'FINISHED'}
 
 
