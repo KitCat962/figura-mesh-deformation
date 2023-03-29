@@ -255,8 +255,7 @@
         0
       ],
       "color": 0,
-      "nbt": "{}",
-      "armAnimationEnabled": false,
+      "uuid": "bf770f85-2116-4341-54bc-bdc24e26ca7c",
       "export": true,
       "mirror_uv": false,
       "isOpen": true,
@@ -272,16 +271,14 @@
             0
           ],
           "color": 0,
-          "nbt": "{}",
-          "armAnimationEnabled": false,
+          "uuid": "481fa340-b0db-a1ed-4666-861bf85cd5ee",
           "export": true,
           "mirror_uv": false,
           "isOpen": true,
           "locked": false,
           "visibility": true,
           "autouv": 0,
-          "children": [
-          ]
+          "children": []
         }
       ]
     }
@@ -292,7 +289,7 @@
       "name": "texture",
       "folder": "block",
       "namespace": "",
-      "id": "0",
+      "id": "2",
       "particle": false,
       "render_mode": "default",
       "render_sides": "auto",

@@ -1,10 +1,15 @@
 
 import bpy
+import os
+import base64
+import mathutils
+from bpy_extras.io_utils import ExportHelper
 from uuid import uuid4 as newUUID
 bl_info = {
     "name": "Export as Figura Avatar",
     "blender": (3, 4, 0),
-    "category": "Object",
+    "category": "Import-Export",
+    "location": "File > Export > Export Figura Avatar",
 }
 
 
@@ -12,73 +17,139 @@ def fixGroupName(name: str):
     return name.replace(".", "").replace(" ", "_")
 
 
-def fixAxis(vector):
+def fixVector(vector: mathutils.Vector) -> mathutils.Vector:
     v = vector.copy()
     v.x, v.y, v.z = v.x*16, v.z*16, -v.y*16
     return v
 
 
-def fixUV(uv):
-    u = [i for i in uv]
-    u[0], u[1] = u[0], 1-u[1]
-    return u
+def fixUV(uv: tuple[float, float]) -> tuple[float, float]:
+    return (uv[0], 1-uv[1])
 
 
-def parseVertexGroups(meshObj):
-    return {fixGroupName(group.name): group.index for group in meshObj.vertex_groups}
+class Vertex:
+    pos: mathutils.Vector
+    weights: dict[int, float]
+
+    def __init__(self, pos: tuple[float, float, float], weights: dict[int, float]) -> None:
+        self.pos = pos
+        self.weights = weights
 
 
-def parseVertexWeights(meshObj):
-    return {vert.index: {group.group: round(group.weight, 4) for group in vert.groups} for vert in meshObj.data.vertices}
-    vertWeights = {}
-    for vert in meshObj.data.vertices:
-        vertWeights[vert.index] = {}
-        for group in vert.groups:
-            vertWeights[vert.index][group.group] = round(group.weight, 4)
+class Loop:
+    vertexIndex: int
+    uv: tuple[float, float]
 
-    print(vertWeights)
-    return vertWeights
-    # for vertGroup in meshObj.vertex_groups:
-    #     vertGroupName = validateGroupName(vertGroup.name)
-    #     vertGroupData[vertGroupName] = []
-    #     for face in meshObj.data.polygons:
-    #         for vert in face.vertices:
-    #             try:
-    #                 weight = vertGroup.weight(vert)
-    #             except:
-    #                 weight = None
-    #             vertGroupData[vertGroupName].append(weight)
-    return vertWeights
+    def __init__(self, vertexIndex: int, uv: tuple[float, float]) -> None:
+        self.vertexIndex = vertexIndex
+        self.uv = uv
 
 
-def parseVertexIndices(meshObj):
-    verts = [[] for _ in range(len(meshObj.data.vertices))]
-    for i, face in enumerate(meshObj.data.polygons):
-        for o, vert in enumerate(face.vertices):
-            verts[vert].append(i*(4)+o)
-    return verts
+class Face:
+    texture: int
+    loopIndices: list[int]
+
+    def __init__(self, texture: int, loopIndices: list[int]) -> None:
+        self.texture = texture
+        self.loopIndices = loopIndices
 
 
-def parseMesh(meshObj):
-    uvs = meshObj.data.uv_layers[0].data
-    mesh = {
-        "vertices": [fixAxis(vert.co) for vert in meshObj.data.vertices],
-        "faces": [{"verts": [i for i in face.vertices], "uv": [fixUV(uvs[uvIndex].uv) for uvIndex in face.loop_indices]} for face in meshObj.data.polygons],
-        "uuid": str(newUUID())
-    }
-    return mesh
+class Bone:
+    name: str
+    pos: mathutils.Vector
+    children: list['Bone']
+
+    def __init__(self, name: str, pos: mathutils.Vector, children: list['Bone']) -> None:
+        self.name = name
+        self.pos = pos
+        self.children = children
+
+    def parseArmature(armature: bpy.types.Armature) -> list['Bone']:
+        return [Bone.parseBone(bone) for bone in armature.bones if bone.parent == None]
+
+    def parseBone(bone: bpy.types.Bone) -> 'Bone':
+        return Bone(fixGroupName(bone.name), fixVector(bone.head_local), [Bone.parseBone(child) for child in bone.children])
 
 
-def parseBone(bone):
-    return {
-        "name": fixGroupName(bone.name),
-        "pos": fixAxis(bone.head_local),
-        "children": [parseBone(child) for child in bone.children]
-    }
+class Texture:
+    name:str
+    base64 = str
+
+    def __init__(self,name:str, base64: str) -> None:
+        self.name=name
+        self.base64 = base64
+
+    def parseImage(image: bpy.types.Image):
+        filepath = image.filepath
+        if not os.path.exists(filepath):
+            filepath = bpy.path.ensure_ext(bpy.path.abspath(
+                f"//{image.name}"), ext=".png", case_sensitive=True)
+            image.save(filepath=filepath)
+            markDel = True
+        data = None
+        with open(filepath, 'rb') as file:
+            data = base64.b64encode(file.read()).decode()
+        if markDel:
+            os.remove(filepath)
+        return Texture(image.name,f'data:image/png;base64,{data}')
+
+    def parseMaterial(material: bpy.types.Material):
+        matOutputNode = material.node_tree.get_output_node('ALL')
+        shaderNode = None
+        for link in material.node_tree.links:
+            if link.to_node == matOutputNode:
+                shaderNode = link.from_node
+                break
+        if shaderNode is None or shaderNode.bl_idname != 'ShaderNodeBsdfPrincipled':
+            img = bpy.data.images.new(
+                f"null_{material.name}_{str(newUUID())}.png", 16, 16)
+            color = (1, 0, 1, 1)
+            for p in range(0, 16*16*4, 8):
+                for i in range(4):
+                    img.pixels[p+i] = color[i]
+            img.file_format = "PNG"
+            texture = Texture.parseImage(img)
+            bpy.data.images.remove(img)
+            return texture
+        textureNode = None
+        for link in material.node_tree.links:
+            if link.to_node == shaderNode:
+                textureNode = link.from_node
+                break
+        if textureNode is None or textureNode.bl_idname != 'ShaderNodeTexImage':
+            img = bpy.data.images.new(
+                f"solid_{material.name}_{str(newUUID())}.png", 1, 1)
+            color = shaderNode.inputs["Base Color"].default_value
+            for i in range(4):
+                img.pixels[i] = color[i]
+            img.file_format = "PNG"
+            texture = Texture.parseImage(img)
+            bpy.data.images.remove(img)
+            return texture
+        return Texture.parseImage(textureNode.image)
 
 
-def parseArmature(armatureObj):
-    return [parseBone(bone) for bone in armatureObj.data.bones if bone.parent == None]
+class Mesh:
+    uuid: str
+    vertices: list[Vertex]
+    loops: list[Loop]
+    faces: list[Face]
+    textures: list[Texture]
+    bones: list[Bone]
+
+    def __init__(self, meshObj: bpy.types.Object):
+        self.uuid = str(newUUID())
+        mesh: bpy.types.Mesh = meshObj.data
+        self.vertices = [Vertex(fixVector(vertex.co), {
+                                group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices]
+        uvs = mesh.uv_layers[0].data
+        self.loops = [Loop(loop.vertex_index, fixUV(uvs[loop.index].uv))
+                      for loop in mesh.loops]
+        self.faces = [Face(face.material_index, [i for i in face.loop_indices])
+                      for face in mesh.polygons]
+        self.bones = Bone.parseArmature(meshObj.find_armature().data)
+        self.textures = [Texture.parseMaterial(
+            materialSlot.material) for materialSlot in meshObj.material_slots]
 
 
 def generateVertices(vertices):
@@ -153,51 +224,49 @@ def generateScript(vertexMap, groups, groupMap):
     )
 
 
-class ExportBlockBench(bpy.types.Operator):
-    """When used on a mesh with an Armature, will do stuff"""      # Use this as a tooltip for menu items and buttons.
-    bl_idname = "object.export"        # Unique identifier for buttons and menu items to reference.
-    bl_label = "Export Blockbench"         # Display name in the interface.
-    bl_options = {'REGISTER'}  # Enable undo for the operator.
+
+class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
+    """Exports the currently seleted mesh as a Figura Avatar"""      # Use this as a tooltip for menu items and buttons.
+    bl_idname = "export.figura_avatar"        # Unique identifier for buttons and menu items to reference.
+    bl_label = "Export Figura Avatar"
+
+    filename_ext = ".bbmodel"
+    use_filter_folder = True
+    filter_glob: bpy.props.StringProperty(
+        default="*.json;*.bbmodel;*.lua",
+        options={'HIDDEN'},
+        maxlen=255,  # Max internal buffer length, longer would be clamped.
+    )
 
     def execute(self, context):
+        print(self.filepath)
+        print(os.path.dirname(self.filepath))
         meshObj = context.active_object
-        if not meshObj:
+        if not meshObj or meshObj.type != "MESH":
+            self.report({'ERROR'}, "Active Object is not a Mesh")
             return {'CANCELLED'}
-        if meshObj.type != "MESH":
-            return {'CANCELLED'}
-        armature = meshObj.find_armature()
-        if not armature:
+        if not meshObj.find_armature():
+            self.report(
+                {'ERROR'}, "Active Mesh must be Parented to an Armature")
             return {'CANCELLED'}
 
-        boneTree = parseArmature(armature)
-        vertexGroups = parseVertexGroups(meshObj)
-        mesh = parseMesh(meshObj)
-        # print(mesh)
-        # print(generateVertexGroupData(vertexGroups))
-
-        # print(generateBBmodel(mesh, groups))
-        vertMap, groupWeights, groupMap = parseVertexIndices(
-            meshObj), parseVertexWeights(meshObj), parseVertexGroups(meshObj)
-        print("vertIndex ", vertMap)
-        print("vertWeights ", groupWeights)
-        print("vertGroups ", groupMap)
-        print()
-        print(generateScript(vertMap, groupWeights, groupMap))
+        # print(Mesh(meshObj))
+        print(bpy.data.materials[1])
+        print(Texture.parseMaterial(bpy.data.materials[1]))
         return {'FINISHED'}
 
 
 def menu_func(self, context):
-    self.layout.operator(ExportBlockBench.bl_idname)
+    self.layout.operator(ExportFiguraAvatar.bl_idname, text="Figura Avatar")
 
 
 def register():
-    bpy.utils.register_class(ExportBlockBench)
-    # Adds the new operator to an existing menu.
-    bpy.types.VIEW3D_MT_object.append(menu_func)
+    bpy.utils.register_class(ExportFiguraAvatar)
+    bpy.types.TOPBAR_MT_file_export.append(menu_func)
 
 
 def unregister():
-    bpy.utils.unregister_class(ExportBlockBench)
+    bpy.utils.unregister_class(ExportFiguraAvatar)
 
 
 if __name__ == "__main__":
