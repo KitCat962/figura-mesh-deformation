@@ -72,11 +72,11 @@ class Bone:
 
 
 class Texture:
-    name:str
+    name: str
     base64 = str
 
-    def __init__(self,name:str, base64: str) -> None:
-        self.name=name
+    def __init__(self, name: str, base64: str) -> None:
+        self.name = name
         self.base64 = base64
 
     def parseImage(image: bpy.types.Image):
@@ -91,7 +91,7 @@ class Texture:
             data = base64.b64encode(file.read()).decode()
         if markDel:
             os.remove(filepath)
-        return Texture(image.name,f'data:image/png;base64,{data}')
+        return Texture(image.name, f'data:image/png;base64,{data}')
 
     def parseMaterial(material: bpy.types.Material):
         matOutputNode = material.node_tree.get_output_node('ALL')
@@ -102,7 +102,7 @@ class Texture:
                 break
         if shaderNode is None or shaderNode.bl_idname != 'ShaderNodeBsdfPrincipled':
             img = bpy.data.images.new(
-                f"null_{material.name}_{str(newUUID())}.png", 16, 16)
+                f"null_{material.name}.png", 16, 16)
             color = (1, 0, 1, 1)
             for p in range(0, 16*16*4, 8):
                 for i in range(4):
@@ -118,7 +118,7 @@ class Texture:
                 break
         if textureNode is None or textureNode.bl_idname != 'ShaderNodeTexImage':
             img = bpy.data.images.new(
-                f"solid_{material.name}_{str(newUUID())}.png", 1, 1)
+                f"solid_{material.name}.png", 1, 1)
             color = shaderNode.inputs["Base Color"].default_value
             for i in range(4):
                 img.pixels[i] = color[i]
@@ -130,99 +130,164 @@ class Texture:
 
 
 class Mesh:
+    name: str
     uuid: str
     vertices: list[Vertex]
     loops: list[Loop]
     faces: list[Face]
     textures: list[Texture]
     bones: list[Bone]
+    vertexGroups: dict[str, int]
 
-    def __init__(self, meshObj: bpy.types.Object):
-        self.uuid = str(newUUID())
+    def __init__(self, name: str, uuid: str, vertices: list[Vertex], loops: list[Loop], faces: list[Face], textures: list[Texture], bones: list[Bone], vertexGroups: dict[str, int]):
+        self.name = name
+        self.uuid = uuid
+        self.vertices = vertices
+        self.loops = loops
+        self.faces = faces
+        self.textures = textures
+        self.bones = bones
+        self.vertexGroups = vertexGroups
+
+    def parseMesh(meshObj: bpy.types.Object) -> 'Mesh':
         mesh: bpy.types.Mesh = meshObj.data
-        self.vertices = [Vertex(fixVector(vertex.co), {
-                                group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices]
         uvs = mesh.uv_layers[0].data
-        self.loops = [Loop(loop.vertex_index, fixUV(uvs[loop.index].uv))
-                      for loop in mesh.loops]
-        self.faces = [Face(face.material_index, [i for i in face.loop_indices])
-                      for face in mesh.polygons]
-        self.bones = Bone.parseArmature(meshObj.find_armature().data)
-        self.textures = [Texture.parseMaterial(
-            materialSlot.material) for materialSlot in meshObj.material_slots]
+        return Mesh(
+            meshObj.name,
+            str(newUUID()),
+            [Vertex(fixVector(vertex.co),
+                    {group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices],
+            [Loop(loop.vertex_index, fixUV(uvs[loop.index].uv))
+             for loop in mesh.loops],
+            [Face(face.material_index, [i for i in face.loop_indices])
+             for face in mesh.polygons],
+            [Texture.parseMaterial(
+                materialSlot.material) for materialSlot in meshObj.material_slots],
+            Bone.parseArmature(meshObj.find_armature().data),
+            {fixGroupName(group.name)
+                          : group.index for group in meshObj.vertex_groups}
+        )
 
 
-def generateVertices(vertices):
-    return ",".join('"{}":[{},{},{}]'.format(str(index), vert[0], vert[1], vert[2]) for index, vert in enumerate(vertices))
+def generateAvatar(name: str, mesh: Mesh):
+    def generateBBModel(name: str, mesh: Mesh):
+        def generateVertices(vertices: list[Vertex]):
+            return (f'"{str(i)}":[{vert.pos.x},{vert.pos.y},{vert.pos.z}]' for i, vert in enumerate(vertices))
 
+        def generateFaces(faces: list[Face], loops: list[Loop]):
+            def generateFaceVertices(face: Face):
+                return (f'"{str(loops[loop].vertexIndex)}"' for loop in face.loopIndices)
 
-def generateFaces(faces):
-    return ",".join('"{name}":{{"vertices":[{vertices}],"uv":{{{uvs}}},"texture":0}}'.format(
-        name=str(faceIndex),
-        vertices=",".join('"{}"'.format(
-            str(vertIndex)
-        ) for vertIndex in face["verts"]),
-        uvs=",".join('"{}":[{},{}]'.format(
-            str(vertIndex),
-            face["uv"][index][0],
-            face["uv"][index][1]
-        ) for index, vertIndex in enumerate(face["verts"]))
-    ) for faceIndex, face in enumerate(faces))
+            def generateFaceUVs(face: Face):
+                return (f'"{loops[loop].vertexIndex}":[{loops[loop].uv[0]},{loops[loop].uv[1]}]'for loop in face.loopIndices)
+            return (
+                (
+                    f'"{str(i)}":{{'
+                    f' "vertices":['
+                    f'  {",".join(generateFaceVertices(face))}'
+                    f' ],'
+                    f' "uv":{{'
+                    f'  {",".join(generateFaceUVs(face))}'
+                    f' }},'
+                    f' "texture":{face.texture}'
+                    f'}}'
+                ) for i, face in enumerate(faces))
 
+        def generateOutliner(bones: list[Bone], meshUUID: str):
+            def generateGroup(bone: Bone):
+                print(bone)
+                return (
+                    f'{{'
+                    f' "name":"{bone.name}",'
+                    f' "origin":[{bone.pos.x},{bone.pos.y},{bone.pos.z}],'
+                    f' "children":['
+                    f'  {",".join(generateGroup(child) for child in bone.children)}'
+                    f' ]'
+                    f'}}'
+                )
+            outliner = [generateGroup(bone) for bone in bones]
+            outliner.append(f'"{meshUUID}"')
+            return outliner
 
-def generateMesh(mesh):
-    return ('{{"name":"mesh","vertices":{{{vertices}}},"faces":{{{faces}}},"type":"mesh","uuid":"{uuid}"}}').format(
-        uuid=mesh["uuid"],
-        vertices=generateVertices(mesh["vertices"]),
-        faces=generateFaces(mesh["faces"])
-    )
+        def generateTextures(textures: list[Texture]):
+            return ((
+                f'{{'
+                f' "name":"{texture.name}",'
+                f' "source":"{texture.base64}"'
+                f'}}'
+            ) for texture in textures)
+        return (
+            f'{{'
+            f' "meta":{{'
+            f'  "format_version":"4.5",'
+            f'  "model_format":"free",'
+            f'  "box_uv":false'
+            f' }},'
+            f' "name":"{name}",'
+            f' "resolution":{{'
+            f'  "width":1,'
+            f'  "height":1'
+            f' }},'
+            f' "elements":['
+            f'  {{'
+            f'   "name":"{mesh.name}",'
+            f'   "vertices":{{'
+            f'    {",".join(generateVertices(mesh.vertices))}'
+            f'   }},'
+            f'   "faces":{{'
+            f'    {",".join(generateFaces(mesh.faces, mesh.loops))}'
+            f'   }},'
+            f'   "type":"mesh",'
+            f'   "uuid":"{mesh.uuid}"'
+            f'  }}'
+            f' ],'
+            f' "outliner":['
+            f'  {",".join(generateOutliner(mesh.bones,mesh.uuid))}'
+            f' ],'
+            f' "textures":['
+            f'  {",".join(generateTextures(mesh.textures))}'
+            f' ]'
+            f'}}'
+        )
 
+    def generateMeshData(mesh: Mesh):
+        def generateGroupMap(groupMap: dict[str, int]):
+            return (f'["{name}"]={index+1}' for name, index in groupMap.items())
 
-def generateVertexGroupData(vertexGroups):
-    return "return {{{}}}".format(
-        ",".join('["{}"]={{{}}}'.format(
-            name,
-            ",".join((str(weight) if weight else "0") for weight in group)
-        ) for name, group in vertexGroups.items())
-    )
+        def generateTextureMap(textures: list[Texture]):
+            return (f'[{index+1}="{texture.name}"]' for index, texture in enumerate(textures))
 
+        def generateVertexData(mesh: Mesh):
+            def generateLoopIndices(vertexIndex: int):
+                return (str(index+1) for index, loop in enumerate(mesh.loops) if loop.vertexIndex == vertexIndex)
 
-def generateGroup(group):
-    return ('{{"name":"{name}","origin":[{x},{y},{z}],"children":[{children}]}}').format(
-        name=group["name"],
-        x=group["pos"][0], y=group["pos"][1], z=group["pos"][2],
-        children=",".join(generateGroup(child) for child in group["children"])
-    )
+            def generateVertexWeights(vertex: Vertex):
+                return (f'[{group+1}]={round(weight,4)}' for group, weight in vertex.weights.items())
 
-
-def generateBBmodel(mesh, groups):
-    outliner = [generateGroup(group) for group in groups]
-    outliner.append('"{}"'.format(mesh["uuid"]))
-    return ('{{"meta": {{"format_version": "4.5","model_format": "free","box_uv": false}},"name":"Avatar","resolution":{{"width":1,"height":1}},"elements":[{mesh}],"outliner":[{outliner}]}}').format(
-        outliner=",".join(outliner),
-        mesh=generateMesh(mesh)
-    )
-
-
-def generateVertexIndexMap(vertexMap):
-    return "{{{}}}".format(",".join("[{}]={{{}}}".format(index+1, ",".join(str(i+1) for i in verts)) for index, verts in enumerate(vertexMap)))
-
-
-def generateVertexGroups(groupWeights):
-    return "{{{}}}".format(",".join("[{}]={{{}}}".format(index+1, ",".join("[{}]={}".format(group+1, weight) for group, weight in weights.items())) for index, weights in groupWeights.items()))
-
-
-def generateGroupMap(groupMap):
-    return "{{{}}}".format(",".join('["{}"]={}'.format(name, index+1) for name, index in groupMap.items()))
-
-
-def generateScript(vertexMap, groups, groupMap):
-    return "return {{vertexMap={},groups={},groupMap={}}}".format(
-        generateVertexIndexMap(vertexMap),
-        generateVertexGroups(groups),
-        generateGroupMap(groupMap)
-    )
-
+            return ((
+                f'[{index+1}]={{'
+                f' loops={{'
+                f'  {",".join(generateLoopIndices(index))}'
+                f' }},'
+                f' weights={{'
+                f'  {",".join(generateVertexWeights(vertex))}'
+                f' }}'
+                f'}}'
+            ) for index, vertex in enumerate(mesh.vertices))
+        return (
+            f'return {{'
+            f' groupMap={{'
+            f'  {",".join(generateGroupMap(mesh.vertexGroups))}'
+            f' }},'
+            f' textureMap={{'
+            f'  {",".join(generateTextureMap(mesh.textures))}'
+            f' }},'
+            f' vertexData={{'
+            f'  {",".join(generateVertexData(mesh))}'
+            f' }}'
+            f'}}'
+        )
+    return generateMeshData(mesh)
 
 
 class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
@@ -249,10 +314,10 @@ class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
             self.report(
                 {'ERROR'}, "Active Mesh must be Parented to an Armature")
             return {'CANCELLED'}
-
         # print(Mesh(meshObj))
-        print(bpy.data.materials[1])
-        print(Texture.parseMaterial(bpy.data.materials[1]))
+        # print(bpy.data.materials[1])
+        # print(Texture.parseMaterial(bpy.data.materials[1]))
+        print(generateAvatar("Avatar", Mesh.parseMesh(meshObj)))
         return {'FINISHED'}
 
 
