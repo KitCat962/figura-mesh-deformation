@@ -82,8 +82,7 @@ class Texture:
     def parseImage(image: bpy.types.Image):
         filepath = image.filepath
         if not os.path.exists(filepath):
-            filepath = bpy.path.ensure_ext(bpy.path.abspath(
-                f"//{image.name}"), ext=".png", case_sensitive=True)
+            filepath = bpy.path.abspath(f"//{image.name}")
             image.save(filepath=filepath)
             markDel = True
         data = None
@@ -102,7 +101,7 @@ class Texture:
                 break
         if shaderNode is None or shaderNode.bl_idname != 'ShaderNodeBsdfPrincipled':
             img = bpy.data.images.new(
-                f"null_{material.name}.png", 16, 16)
+                f"null_{material.name}", 16, 16)
             color = (1, 0, 1, 1)
             for p in range(0, 16*16*4, 8):
                 for i in range(4):
@@ -118,7 +117,7 @@ class Texture:
                 break
         if textureNode is None or textureNode.bl_idname != 'ShaderNodeTexImage':
             img = bpy.data.images.new(
-                f"solid_{material.name}.png", 1, 1)
+                f"solid_{material.name}", 1, 1)
             color = shaderNode.inputs["Base Color"].default_value
             for i in range(4):
                 img.pixels[i] = color[i]
@@ -153,7 +152,7 @@ class Mesh:
         mesh: bpy.types.Mesh = meshObj.data
         uvs = mesh.uv_layers[0].data
         return Mesh(
-            meshObj.name,
+            fixGroupName(meshObj.name),
             str(newUUID()),
             [Vertex(fixVector(vertex.co),
                     {group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices],
@@ -170,7 +169,7 @@ class Mesh:
 
 
 def generateAvatar(name: str, mesh: Mesh):
-    def generateBBModel(name: str, mesh: Mesh):
+    def generateBBModel(mesh: Mesh):
         def generateVertices(vertices: list[Vertex]):
             return (f'"{str(i)}":[{vert.pos.x},{vert.pos.y},{vert.pos.z}]' for i, vert in enumerate(vertices))
 
@@ -223,7 +222,7 @@ def generateAvatar(name: str, mesh: Mesh):
             f'  "model_format":"free",'
             f'  "box_uv":false'
             f' }},'
-            f' "name":"{name}",'
+            f' "name":"KattMeshDeformation",'
             f' "resolution":{{'
             f'  "width":1,'
             f'  "height":1'
@@ -252,18 +251,37 @@ def generateAvatar(name: str, mesh: Mesh):
 
     def generateMeshData(mesh: Mesh):
         def generateGroupMap(groupMap: dict[str, int]):
-            return (f'["{name}"]={index+1}' for name, index in groupMap.items())
+            return (f'["{groupName}"]={groupIndex+1}' for groupName, groupIndex in groupMap.items())
 
         def generateTextureMap(textures: list[Texture]):
-            return (f'[{index+1}="{texture.name}"]' for index, texture in enumerate(textures))
+            return (f'[{textureIndex+1}]="{texture.name}"' for textureIndex, texture in enumerate(textures))
 
         def generateVertexData(mesh: Mesh):
+            textureVertexMap=[[]for _ in mesh.textures]
+            for face in mesh.faces:
+                for loopIndex in face.loopIndices:
+                  textureVertexMap[face.texture].append(loopIndex)
             def generateLoopIndices(vertexIndex: int):
-                return (str(index+1) for index, loop in enumerate(mesh.loops) if loop.vertexIndex == vertexIndex)
+                textureVertexIndices:dict[int,list[int]]={}
+                for textureIndex,loops in enumerate(textureVertexMap):
+                    for loopIndex in loops:
+                        if mesh.loops[loopIndex].vertexIndex==vertexIndex:
+                            break
+                    else:
+                        continue
+                    textureVertexIndices[textureIndex]=[]
+                    for index,loopIndex in enumerate(loops):
+                        if mesh.loops[loopIndex].vertexIndex==vertexIndex:
+                            textureVertexIndices[textureIndex].append(index)
+                return ((
+                    f'[{textureIndex+1}]={{'
+                    f' {",".join(str(x+1) for x in loops)}'
+                    f'}}'
+                ) for textureIndex,loops in textureVertexIndices.items())
 
             def generateVertexWeights(vertex: Vertex):
                 return (f'[{group+1}]={round(weight,4)}' for group, weight in vertex.weights.items())
-
+            #print([generateLoopIndices(index)for index, vertex in enumerate(mesh.vertices)])
             return ((
                 f'[{index+1}]={{'
                 f' loops={{'
@@ -276,6 +294,7 @@ def generateAvatar(name: str, mesh: Mesh):
             ) for index, vertex in enumerate(mesh.vertices))
         return (
             f'return {{'
+            f' modelName="{name}",'
             f' groupMap={{'
             f'  {",".join(generateGroupMap(mesh.vertexGroups))}'
             f' }},'
@@ -287,7 +306,7 @@ def generateAvatar(name: str, mesh: Mesh):
             f' }}'
             f'}}'
         )
-    return generateMeshData(mesh)
+    print(generateBBModel(mesh),generateMeshData(mesh))
 
 
 class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
@@ -317,7 +336,7 @@ class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
         # print(Mesh(meshObj))
         # print(bpy.data.materials[1])
         # print(Texture.parseMaterial(bpy.data.materials[1]))
-        print(generateAvatar("Avatar", Mesh.parseMesh(meshObj)))
+        generateAvatar("Avatar", Mesh.parseMesh(meshObj))
         return {'FINISHED'}
 
 

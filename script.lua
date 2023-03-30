@@ -1,17 +1,18 @@
 local meshData = require("meshData")
 local model = models.test
-local nextKey, figuraVertices = next(model.mesh:getAllVertices())
-if next(model.mesh:getAllVertices(), nextKey) then error("Only one texture is supported on the mesh.") end
+local figuraVertices = model["Cube001"]:getAllVertices()
 local vertices = {}
-for index, vertexIndexes in ipairs(meshData.vertexMap) do
+for index, data in ipairs(meshData.vertexData) do
   vertices[index] = {
     verts = {},
-    pos = figuraVertices[meshData.vertexMap[index][1]]:getPos(),
-    groupWeights = meshData.groups[index]
+    groupWeights = data.weights
   }
-  for i, vertIndex in ipairs(vertexIndexes) do
-    vertices[index].verts[i] = figuraVertices[vertIndex]
+  for textureIndex, loopData in pairs(data.loops) do
+    for _, vert in ipairs(loopData) do
+        table.insert(vertices[index].verts,figuraVertices["test."..meshData.textureMap[textureIndex]][vert])
+    end
   end
+  vertices[index].pos=vertices[index].verts[1]:getPos()
 end
 
 local boneTree = {}
@@ -69,4 +70,28 @@ do
       end
     end
   end
+end
+
+
+local _rot = 0
+local rot = 0
+local dir = 2
+local _rot2 = 0
+local rot2 = 0
+local dir2 = 3
+function events.tick()
+  _rot = rot
+  rot = rot + dir
+  if math.abs(rot) > 60 then
+    dir = -dir
+  end
+  _rot2 = rot2
+  rot2 = rot2 + dir2
+  if math.abs(rot2) > 45 then
+    dir2 = -dir2
+  end
+end
+
+function events.render(delta)
+  model.Bone.Bone001:setRot(math.lerp(_rot, rot, delta),0,math.lerp(_rot2, rot2, delta))
 end
