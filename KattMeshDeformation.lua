@@ -1,17 +1,27 @@
 return function(meshData)
+  if type(meshData)=="string" then
+    meshData=require(meshData)
+  end
   local model = models[meshData.modelName]
   local figuraVertices = model.Mesh:getAllVertices()
   local vertices = {}
   for index, data in ipairs(meshData.vertexData) do
     vertices[index] = {
       verts = {},
-      groupWeights = data.weights
     }
     for textureIndex, loopData in pairs(data.loops) do
       for _, vert in ipairs(loopData) do
         table.insert(vertices[index].verts,
           figuraVertices[("%s.%s"):format(meshData.modelName, meshData.textureMap[textureIndex])][vert])
       end
+    end
+    local groupSum=0
+    for _, weight in pairs(data.weights) do
+      groupSum=groupSum+weight
+    end
+    vertices[index].groupWeights={}
+    for key, weight in pairs(data.weights) do
+      vertices[index].groupWeights[key]=1/groupSum*weight
     end
     vertices[index].pos = vertices[index].verts[1]:getPos()
   end

@@ -154,15 +154,21 @@ class Mesh:
         from uuid import uuid4
         mesh: BlMesh = meshObj.data
         uvs = mesh.uv_layers[0].data
+        loops=[]
+        for loop in mesh.loops:
+            for f in mesh.polygons:
+                if loop.index in f.loop_indices and f.loop_total in {3,4}:
+                  loops.append(Loop(loop.vertex_index, fixUV(uvs[loop.index].uv)))
+                  break
+                    
         return Mesh(
             fixGroupName(meshObj.name),
             str(uuid4()),
             [Vertex(fixVector(vertex.co),
-                    {group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices],
-            [Loop(loop.vertex_index, fixUV(uvs[loop.index].uv))
-             for loop in mesh.loops],
+                    {group.group: group.weight for group in vertex.groups if group.weight>=0.0001}) for vertex in mesh.vertices],
+            loops,
             [Face(face.material_index, [i for i in face.loop_indices])
-             for face in mesh.polygons],
+             for face in mesh.polygons if face.loop_total in {3,4}],
             [Texture.parseMaterial(
                 materialSlot.material) for materialSlot in meshObj.material_slots],
             Bone.parseArmature(meshObj.find_armature().data),
@@ -264,6 +270,8 @@ def generateAvatar(name: str, mesh: Mesh):
             for face in mesh.faces:
                 for loopIndex in face.loopIndices:
                     textureVertexMap[face.texture].append(loopIndex)
+                    if len(face.loopIndices)==3 and loopIndex == face.loopIndices[len(face.loopIndices)-1]:
+                        textureVertexMap[face.texture].append(loopIndex)
 
             def generateLoopIndices(vertexIndex: int):
                 textureVertexIndices: dict[int, list[int]] = {}
@@ -338,6 +346,10 @@ class ExportFiguraAvatar(BlOperator, ExportHelper):
         if not meshObj.find_armature():
             self.report(
                 {'ERROR'}, "Active Mesh must be Parented to an Armature")
+            return {'CANCELLED'}
+        if len(meshObj.material_slots)==0:
+            self.report(
+                {'ERROR'}, "Active Mesh must have at least 1 material")
             return {'CANCELLED'}
 
         import os
