@@ -1,23 +1,23 @@
 
 import bpy
-import os
-import base64
-import mathutils
+from bpy.types import Object as BlObject, Mesh as BlMesh, Material as BlMaterial, Armature as BlArmature, Bone as BlBone
+from bpy.types import Image as BlImage, Operator as BlOperator
+from mathutils import Vector as BlVector
 from bpy_extras.io_utils import ExportHelper
-from uuid import uuid4 as newUUID
 bl_info = {
-    "name": "Export as Figura Avatar",
+    "name": "Export Figura Avatar",
+    "author": "KitCat962",
+    "description": "Exports a bbmodel file with a corresponding script file, allowing for controlled mesh deformation in Figura via armatures.",
     "blender": (3, 4, 0),
     "category": "Import-Export",
     "location": "File > Export > Export Figura Avatar",
 }
 
-
 def fixGroupName(name: str):
     return name.replace(".", "").replace(" ", "_")
 
 
-def fixVector(vector: mathutils.Vector) -> mathutils.Vector:
+def fixVector(vector: BlVector) -> BlVector:
     v = vector.copy()
     v.x, v.y, v.z = v.x*16, v.z*16, -v.y*16
     return v
@@ -28,7 +28,7 @@ def fixUV(uv: tuple[float, float]) -> tuple[float, float]:
 
 
 class Vertex:
-    pos: mathutils.Vector
+    pos: BlVector
     weights: dict[int, float]
 
     def __init__(self, pos: tuple[float, float, float], weights: dict[int, float]) -> None:
@@ -56,18 +56,18 @@ class Face:
 
 class Bone:
     name: str
-    pos: mathutils.Vector
+    pos: BlVector
     children: list['Bone']
 
-    def __init__(self, name: str, pos: mathutils.Vector, children: list['Bone']) -> None:
+    def __init__(self, name: str, pos: BlVector, children: list['Bone']) -> None:
         self.name = name
         self.pos = pos
         self.children = children
 
-    def parseArmature(armature: bpy.types.Armature) -> list['Bone']:
+    def parseArmature(armature: BlArmature) -> list['Bone']:
         return [Bone.parseBone(bone) for bone in armature.bones if bone.parent == None]
 
-    def parseBone(bone: bpy.types.Bone) -> 'Bone':
+    def parseBone(bone: BlBone) -> 'Bone':
         return Bone(fixGroupName(bone.name), fixVector(bone.head_local), [Bone.parseBone(child) for child in bone.children])
 
 
@@ -79,7 +79,8 @@ class Texture:
         self.name = name
         self.base64 = base64
 
-    def parseImage(image: bpy.types.Image):
+    def parseImage(image: BlImage):
+        import os
         filepath = image.filepath
         if not os.path.exists(filepath):
             filepath = bpy.path.abspath(f"//{image.name}")
@@ -87,12 +88,13 @@ class Texture:
             markDel = True
         data = None
         with open(filepath, 'rb') as file:
-            data = base64.b64encode(file.read()).decode()
+            from base64 import b64encode
+            data = b64encode(file.read()).decode()
         if markDel:
             os.remove(filepath)
         return Texture(image.name, f'data:image/png;base64,{data}')
 
-    def parseMaterial(material: bpy.types.Material):
+    def parseMaterial(material: BlMaterial):
         matOutputNode = material.node_tree.get_output_node('ALL')
         shaderNode = None
         for link in material.node_tree.links:
@@ -148,12 +150,13 @@ class Mesh:
         self.bones = bones
         self.vertexGroups = vertexGroups
 
-    def parseMesh(meshObj: bpy.types.Object) -> 'Mesh':
-        mesh: bpy.types.Mesh = meshObj.data
+    def parseMesh(meshObj: BlObject) -> 'Mesh':
+        from uuid import uuid4
+        mesh: BlMesh = meshObj.data
         uvs = mesh.uv_layers[0].data
         return Mesh(
             fixGroupName(meshObj.name),
-            str(newUUID()),
+            str(uuid4()),
             [Vertex(fixVector(vertex.co),
                     {group.group: group.weight for group in vertex.groups}) for vertex in mesh.vertices],
             [Loop(loop.vertex_index, fixUV(uvs[loop.index].uv))
@@ -163,8 +166,7 @@ class Mesh:
             [Texture.parseMaterial(
                 materialSlot.material) for materialSlot in meshObj.material_slots],
             Bone.parseArmature(meshObj.find_armature().data),
-            {fixGroupName(group.name)
-                          : group.index for group in meshObj.vertex_groups}
+            {fixGroupName(group.name)             : group.index for group in meshObj.vertex_groups}
         )
 
 
@@ -194,7 +196,6 @@ def generateAvatar(name: str, mesh: Mesh):
 
         def generateOutliner(bones: list[Bone], meshUUID: str):
             def generateGroup(bone: Bone):
-                print(bone)
                 return (
                     f'{{'
                     f' "name":"{bone.name}",'
@@ -229,7 +230,9 @@ def generateAvatar(name: str, mesh: Mesh):
             f' }},'
             f' "elements":['
             f'  {{'
-            f'   "name":"{mesh.name}",'
+            f'   "name":"Mesh",'
+            f'   "origin":[0,0,0],'
+            f'   "rotation":[0,0,0],'
             f'   "vertices":{{'
             f'    {",".join(generateVertices(mesh.vertices))}'
             f'   }},'
@@ -249,7 +252,7 @@ def generateAvatar(name: str, mesh: Mesh):
             f'}}'
         )
 
-    def generateMeshData(mesh: Mesh):
+    def generateMeshData(name: str, mesh: Mesh):
         def generateGroupMap(groupMap: dict[str, int]):
             return (f'["{groupName}"]={groupIndex+1}' for groupName, groupIndex in groupMap.items())
 
@@ -257,31 +260,31 @@ def generateAvatar(name: str, mesh: Mesh):
             return (f'[{textureIndex+1}]="{texture.name}"' for textureIndex, texture in enumerate(textures))
 
         def generateVertexData(mesh: Mesh):
-            textureVertexMap=[[]for _ in mesh.textures]
+            textureVertexMap = [[]for _ in mesh.textures]
             for face in mesh.faces:
                 for loopIndex in face.loopIndices:
-                  textureVertexMap[face.texture].append(loopIndex)
+                    textureVertexMap[face.texture].append(loopIndex)
+
             def generateLoopIndices(vertexIndex: int):
-                textureVertexIndices:dict[int,list[int]]={}
-                for textureIndex,loops in enumerate(textureVertexMap):
+                textureVertexIndices: dict[int, list[int]] = {}
+                for textureIndex, loops in enumerate(textureVertexMap):
                     for loopIndex in loops:
-                        if mesh.loops[loopIndex].vertexIndex==vertexIndex:
+                        if mesh.loops[loopIndex].vertexIndex == vertexIndex:
                             break
                     else:
                         continue
-                    textureVertexIndices[textureIndex]=[]
-                    for index,loopIndex in enumerate(loops):
-                        if mesh.loops[loopIndex].vertexIndex==vertexIndex:
+                    textureVertexIndices[textureIndex] = []
+                    for index, loopIndex in enumerate(loops):
+                        if mesh.loops[loopIndex].vertexIndex == vertexIndex:
                             textureVertexIndices[textureIndex].append(index)
                 return ((
                     f'[{textureIndex+1}]={{'
                     f' {",".join(str(x+1) for x in loops)}'
                     f'}}'
-                ) for textureIndex,loops in textureVertexIndices.items())
+                ) for textureIndex, loops in textureVertexIndices.items())
 
             def generateVertexWeights(vertex: Vertex):
                 return (f'[{group+1}]={round(weight,4)}' for group, weight in vertex.weights.items())
-            #print([generateLoopIndices(index)for index, vertex in enumerate(mesh.vertices)])
             return ((
                 f'[{index+1}]={{'
                 f' loops={{'
@@ -306,25 +309,28 @@ def generateAvatar(name: str, mesh: Mesh):
             f' }}'
             f'}}'
         )
-    print(generateBBModel(mesh),generateMeshData(mesh))
+    return (generateBBModel(mesh), generateMeshData(name, mesh))
 
 
-class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
+class ExportFiguraAvatar(BlOperator, ExportHelper):
+    from bpy.props import BoolProperty, StringProperty
     """Exports the currently seleted mesh as a Figura Avatar"""      # Use this as a tooltip for menu items and buttons.
     bl_idname = "export.figura_avatar"        # Unique identifier for buttons and menu items to reference.
     bl_label = "Export Figura Avatar"
 
     filename_ext = ".bbmodel"
     use_filter_folder = True
-    filter_glob: bpy.props.StringProperty(
+    filter_glob: StringProperty(
         default="*.json;*.bbmodel;*.lua",
         options={'HIDDEN'},
         maxlen=255,  # Max internal buffer length, longer would be clamped.
     )
 
+    export_with_driver: BoolProperty(
+        name="Export with driver code"
+    )
+
     def execute(self, context):
-        print(self.filepath)
-        print(os.path.dirname(self.filepath))
         meshObj = context.active_object
         if not meshObj or meshObj.type != "MESH":
             self.report({'ERROR'}, "Active Object is not a Mesh")
@@ -333,10 +339,23 @@ class ExportFiguraAvatar(bpy.types.Operator, ExportHelper):
             self.report(
                 {'ERROR'}, "Active Mesh must be Parented to an Armature")
             return {'CANCELLED'}
-        # print(Mesh(meshObj))
-        # print(bpy.data.materials[1])
-        # print(Texture.parseMaterial(bpy.data.materials[1]))
-        generateAvatar("Avatar", Mesh.parseMesh(meshObj))
+
+        import os
+        directory, file = os.path.split(self.filepath)
+        filename = os.path.splitext(file)[0]
+        bbmodel, meshdata = generateAvatar(filename, Mesh.parseMesh(meshObj))
+
+        with open(os.path.join(directory, f'{filename}.bbmodel'), 'w') as file:
+            file.write(bbmodel)
+
+        with open(os.path.join(directory, f'{filename}-MeshData.lua'), 'w') as file:
+            file.write(meshdata)
+
+        if self.export_with_driver:
+            import shutil
+            addonDir, addonFile = os.path.split(__file__)
+            shutil.copyfile(os.path.join(addonDir,"KattMeshDeformation.lua"),os.path.join(directory,"KattMeshDeformation.lua"))
+
         return {'FINISHED'}
 
 
