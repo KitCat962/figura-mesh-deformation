@@ -19,7 +19,7 @@ def fixGroupName(name: str):
 
 def fixVector(vector: BlVector) -> BlVector:
     v = vector.copy()
-    v.x, v.y, v.z = v.x*16, v.z*16, -v.y*16
+    v.x, v.y, v.z = -v.x*16, v.z*16, v.y*16
     return v
 
 
@@ -98,7 +98,7 @@ class Texture:
         matOutputNode = material.node_tree.get_output_node('ALL')
         shaderNode = None
         for link in material.node_tree.links:
-            if link.to_node == matOutputNode:
+            if link.to_node == matOutputNode and link.to_socket.name=="Surface":
                 shaderNode = link.from_node
                 break
         if shaderNode is None or shaderNode.bl_idname != 'ShaderNodeBsdfPrincipled':
@@ -114,7 +114,7 @@ class Texture:
             return texture
         textureNode = None
         for link in material.node_tree.links:
-            if link.to_node == shaderNode:
+            if link.to_node == shaderNode and link.to_socket.name=="Base Color":
                 textureNode = link.from_node
                 break
         if textureNode is None or textureNode.bl_idname != 'ShaderNodeTexImage':

@@ -15,13 +15,15 @@ return function(meshData)
           figuraVertices[("%s.%s"):format(meshData.modelName, meshData.textureMap[textureIndex])][vert])
       end
     end
-    local groupSum=0
-    for _, weight in pairs(data.weights) do
-      groupSum=groupSum+weight
-    end
-    vertices[index].groupWeights={}
-    for key, weight in pairs(data.weights) do
-      vertices[index].groupWeights[key]=1/groupSum*weight
+    if next(data.weights) then
+      local groupSum=0
+      for _, weight in pairs(data.weights) do
+        groupSum=groupSum+weight
+      end
+      vertices[index].groupWeights={}
+      for key, weight in pairs(data.weights) do
+        vertices[index].groupWeights[key]=1/groupSum*weight
+      end
     end
     vertices[index].pos = vertices[index].verts[1]:getPos()
   end
@@ -33,7 +35,7 @@ return function(meshData)
       if groupIndex then
         local a = {
           index = groupIndex,
-          modelPart = modelPart,
+          modelPart = modelPart:setParentType("None"),
         }
         for _, child in ipairs(modelPart:getChildren()) do
           if child:getType() == "GROUP" then
@@ -51,14 +53,13 @@ return function(meshData)
   end
   do
     local function generateMatrixMap(bone, map, parentMat)
-      local mat = bone.modelPart:getPositionMatrix():multiply(parentMat)
+      local mat = parentMat*bone.modelPart:getPositionMatrix()
       map[bone.index] = mat
       for i = 1, #bone do
         generateMatrixMap(bone[i], map, mat)
       end
     end
 
-    local insert = table.insert
     local vec3 = vectors.vec3
     local mat4 = matrices.mat4
     function events.render()
@@ -66,18 +67,15 @@ return function(meshData)
       for i = 1, #boneTree do
         generateMatrixMap(boneTree[i], boneMats, mat4())
       end
-      for index, vertData in ipairs(vertices) do
-        local t = {}
-        for groupIndex, weight in pairs(vertData.groupWeights) do
-          insert(t, boneMats[groupIndex]:apply(vertData.pos) * weight)
-        end
-        local sum = vec3()
-        for i = 1, #t do
-          sum = sum + t[i]
-        end
-        local verts = vertData.verts
-        for i = 1, #verts do
-          verts[i]:setPos(sum)
+      for _, vertData in ipairs(vertices) do
+        if vertData.groupWeights then
+          local weightSum = vec3()
+          for groupIndex, weight in pairs(vertData.groupWeights) do
+            weightSum=weightSum + (boneMats[groupIndex]:apply(vertData.pos) * weight)
+          end
+          for _, vert in ipairs(vertData.verts) do
+            vert:setPos(weightSum)
+          end
         end
       end
     end
