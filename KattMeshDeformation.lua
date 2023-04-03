@@ -1,77 +1,81 @@
 return function(meshData)
-  if type(meshData)=="string" then
-    meshData=require(meshData)
+  if type(meshData) == "string" then
+    local file, found = meshData, nil
+    found, meshData = pcall(require, file)
+    if not found then
+      found, meshData = pcall(require, ("%s-MeshData"):format(file))
+      if not found then
+        error(("MeshData %q could not be found."):format(file), 2)
+      end
+    end
   end
-  local model = models[meshData.modelName]
+  local modelName, vertexData, textureMap = meshData.modelName, meshData.vertexData, meshData.textureMap
+  local model = models[modelName]
   local figuraVertices = model.Mesh:getAllVertices()
   local vertices = {}
-  for index, data in ipairs(meshData.vertexData) do
-    vertices[index] = {
-      verts = {},
-    }
+  local modelTextureFString = ("%s.%s"):format(modelName, "%s")
+  for index, data in ipairs(vertexData) do
+    local vertex = {}
+    local vertexObjects = {}
     for textureIndex, loopData in pairs(data.loops) do
+      local textureVertices = figuraVertices[modelTextureFString:format(textureMap[textureIndex])]
       for _, vert in ipairs(loopData) do
-        table.insert(vertices[index].verts,
-          figuraVertices[("%s.%s"):format(meshData.modelName, meshData.textureMap[textureIndex])][vert])
+        table.insert(vertexObjects, textureVertices[vert])
       end
     end
-    if next(data.weights) then
-      local groupSum=0
+    vertex.verts = vertexObjects
+    if data.weights then
+      local groupSum = 0
       for _, weight in pairs(data.weights) do
-        groupSum=groupSum+weight
+        groupSum = groupSum + weight
       end
-      vertices[index].groupWeights={}
+      local groupWeights = {}
       for key, weight in pairs(data.weights) do
-        vertices[index].groupWeights[key]=1/groupSum*weight
+        groupWeights[key] = 1 / groupSum * weight
       end
+      vertex.groupWeights = groupWeights
     end
-    vertices[index].pos = vertices[index].verts[1]:getPos()
+    vertex.pos = vertex.verts[1]:getPos()
+    vertices[index] = vertex
   end
 
   local boneTree = {}
   do
-    local function generateBoneTree(modelPart, parentTable)
+    local function generateBoneTree(modelPart, parentIndex)
       local groupIndex = meshData.groupMap[modelPart:getName()]
       if groupIndex then
         local a = {
+          parent = parentIndex,
           index = groupIndex,
           modelPart = modelPart:setParentType("None"),
         }
+        table.insert(boneTree, a)
         for _, child in ipairs(modelPart:getChildren()) do
           if child:getType() == "GROUP" then
-            generateBoneTree(child, a)
+            generateBoneTree(child, a.index)
           end
         end
-        table.insert(parentTable, a)
       end
     end
     for _, child in ipairs(model:getChildren()) do
       if child:getType() == "GROUP" then
-        generateBoneTree(child, boneTree)
+        generateBoneTree(child)
       end
     end
   end
   do
-    local function generateMatrixMap(bone, map, parentMat)
-      local mat = parentMat*bone.modelPart:getPositionMatrix()
-      map[bone.index] = mat
-      for i = 1, #bone do
-        generateMatrixMap(bone[i], map, mat)
-      end
-    end
-
     local vec3 = vectors.vec3
-    local mat4 = matrices.mat4
+    local mat4 = matrices.mat4()
     function events.render()
       local boneMats = {}
-      for i = 1, #boneTree do
-        generateMatrixMap(boneTree[i], boneMats, mat4())
+      for _, bone in ipairs(boneTree) do
+        boneMats[bone.index] = (boneMats[bone.parent] or mat4) * bone.modelPart:getPositionMatrix()
       end
       for _, vertData in ipairs(vertices) do
         if vertData.groupWeights then
           local weightSum = vec3()
           for groupIndex, weight in pairs(vertData.groupWeights) do
-            weightSum=weightSum + (boneMats[groupIndex]:apply(vertData.pos) * weight)
+            weightSum = weightSum + (boneMats[groupIndex]:apply(vertData.pos) * weight)
           end
           for _, vert in ipairs(vertData.verts) do
             vert:setPos(weightSum)
