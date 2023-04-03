@@ -175,148 +175,137 @@ class Mesh:
             {fixGroupName(group.name)             : group.index for group in meshObj.vertex_groups}
         )
 
-
+class JsonParser:
+    def toJson(obj:'Any'):
+        match obj:
+            case dict():
+                return f'{{{",".join(f"{JsonParser.toJson(key)}:{JsonParser.toJson(value)}" for key,value in obj.items())}}}'
+            case list():
+                return f'[{",".join(JsonParser.toJson(value) for value in obj)}]'
+            case str():
+                return f'"{obj}"'
+            case bool():
+                return "true" if obj else "false"
+            case int():
+                return str(obj)
+            case float():
+                return str(obj)
+            case set():
+                print(obj)
+                for i in obj:
+                    print(i)
+                raise TypeError("wtf is a set")
+            case _:
+                raise TypeError(f'Unknown type:"{type(obj)}" ({obj})')
+class LuaParser:
+    keywords=["and","break","do","else","elseif","end","false","for","function","if","in","local","nil","not","or","repeat","return","then","true","until","while"]
+    def isValidName(s:str):
+        import re
+        return bool(type(s) is str and re.search(r'^[a-zA-Z0-9_]+$', s) and not s.startswith(('0','1','2','3','4','5','6','7','8','9')) and not any(s==k for k in LuaParser.keywords))
+    def toLua(obj:'Any'):
+        match obj:
+            case dict():
+                elemets=[(f'{key}:{LuaParser.toLua(value)}' if LuaParser.isValidName(key) else f'[{LuaParser.toLua(key)}]={LuaParser.toLua(value)}') for key,value in obj.items() if value!=None]
+                return f'{{{",".join(elemets)}}}'
+            case list():
+                return f'{{{",".join(LuaParser.toLua(value) for value in obj)}}}'
+            case str():
+                return f'"{obj}"'
+            case bool():
+                return "true" if obj else "false"
+            case int():
+                return str(obj)
+            case float():
+                return str(obj)
+            case None:
+                return 'nil'
+            case _:
+                raise TypeError(f'Unknown type:"{type(obj)}" ({obj})')
+        
 def generateAvatar(name: str, mesh: Mesh):
     def generateBBModel(mesh: Mesh):
-        def generateVertices(vertices: list[Vertex]):
-            return (f'"{str(i)}":[{vert.pos.x},{vert.pos.y},{vert.pos.z}]' for i, vert in enumerate(vertices))
-
-        def generateFaces(faces: list[Face], loops: list[Loop]):
-            def generateFaceVertices(face: Face):
-                return (f'"{str(loops[loop].vertexIndex)}"' for loop in face.loopIndices)
-
-            def generateFaceUVs(face: Face):
-                return (f'"{loops[loop].vertexIndex}":[{loops[loop].uv[0]},{loops[loop].uv[1]}]'for loop in face.loopIndices)
-            return (
-                (
-                    f'"{str(i)}":{{'
-                    f' "vertices":['
-                    f'  {",".join(generateFaceVertices(face))}'
-                    f' ],'
-                    f' "uv":{{'
-                    f'  {",".join(generateFaceUVs(face))}'
-                    f' }},'
-                    f' "texture":{face.texture}'
-                    f'}}'
-                ) for i, face in enumerate(faces))
-
-        def generateOutliner(bones: list[Bone], meshUUID: str):
-            def generateGroup(bone: Bone):
-                return (
-                    f'{{'
-                    f' "name":"{bone.name}",'
-                    f' "origin":[{bone.pos.x},{bone.pos.y},{bone.pos.z}],'
-                    f' "children":['
-                    f'  {",".join(generateGroup(child) for child in bone.children)}'
-                    f' ]'
-                    f'}}'
-                )
-            outliner = [generateGroup(bone) for bone in bones]
-            outliner.append(f'"{meshUUID}"')
-            return outliner
-
-        def generateTextures(textures: list[Texture]):
-            return ((
-                f'{{'
-                f' "name":"{texture.name}",'
-                f' "source":"{texture.base64}"'
-                f'}}'
-            ) for texture in textures)
-        return (
-            f'{{'
-            f' "meta":{{'
-            f'  "format_version":"4.5",'
-            f'  "model_format":"free",'
-            f'  "box_uv":false'
-            f' }},'
-            f' "name":"KattMeshDeformation",'
-            f' "resolution":{{'
-            f'  "width":1,'
-            f'  "height":1'
-            f' }},'
-            f' "elements":['
-            f'  {{'
-            f'   "name":"Mesh",'
-            f'   "origin":[0,0,0],'
-            f'   "rotation":[0,0,0],'
-            f'   "vertices":{{'
-            f'    {",".join(generateVertices(mesh.vertices))}'
-            f'   }},'
-            f'   "faces":{{'
-            f'    {",".join(generateFaces(mesh.faces, mesh.loops))}'
-            f'   }},'
-            f'   "type":"mesh",'
-            f'   "uuid":"{mesh.uuid}"'
-            f'  }}'
-            f' ],'
-            f' "outliner":['
-            f'  {",".join(generateOutliner(mesh.bones,mesh.uuid))}'
-            f' ],'
-            f' "textures":['
-            f'  {",".join(generateTextures(mesh.textures))}'
-            f' ]'
-            f'}}'
-        )
+        def generateGroup(bone: Bone):
+            return {
+                "name":bone.name,
+                "origin":[bone.pos.x,bone.pos.y,bone.pos.z],
+                "children":[generateGroup(child) for child in bone.children]
+            }
+        bbmodel={
+            "meta":{
+              "format_version":"4.5",
+              "model_format":"free",
+              "box_uv":False
+            },
+            "name":"KattMeshDeformation",
+            "resolution":{
+              "width":1,
+              "height":1
+            },
+            "elements":[{
+              "name":"Mesh",
+              "origin":[0,0,0],
+              "rotation":[0,0,0],
+              "vertices":{
+                str(i):[
+                  vert.pos.x,
+                  vert.pos.y,
+                  vert.pos.z
+                ] for i, vert in enumerate(mesh.vertices)
+              },
+              "faces":{
+                str(i):{
+                  "vertices":[str(mesh.loops[loop].vertexIndex) for loop in face.loopIndices],
+                  "uv":{
+                    str(mesh.loops[loop].vertexIndex):[
+                      mesh.loops[loop].uv[0],
+                      mesh.loops[loop].uv[1]
+                    ] for loop in face.loopIndices
+                  },
+                  "texture":face.texture
+                } for i, face in enumerate(mesh.faces)
+              },
+              "type":"mesh",
+              "uuid":mesh.uuid
+            }],
+            "outliner":[generateGroup(bone) for bone in mesh.bones],
+            "textures":[{
+              "name":texture.name,
+              "source":texture.base64
+            } for texture in mesh.textures]
+        }
+        bbmodel["outliner"].append(mesh.uuid)
+        return JsonParser.toJson(bbmodel)
 
     def generateMeshData(name: str, mesh: Mesh):
-        def generateGroupMap(groupMap: dict[str, int]):
-            return (f'["{groupName}"]={groupIndex+1}' for groupName, groupIndex in groupMap.items())
-
-        def generateTextureMap(textures: list[Texture]):
-            return (f'[{textureIndex+1}]="{texture.name}"' for textureIndex, texture in enumerate(textures))
-
-        def generateVertexData(mesh: Mesh):
-            textureVertexMap = [[]for _ in mesh.textures]
-            for face in mesh.faces:
-                for loopIndex in face.loopIndices:
-                    textureVertexMap[face.texture].append(loopIndex)
-                    if len(face.loopIndices)==3 and loopIndex == face.loopIndices[len(face.loopIndices)-1]:
-                        textureVertexMap[face.texture].append(loopIndex)
-
-            def generateLoopIndices(vertexIndex: int):
-                textureVertexIndices: dict[int, list[int]] = {}
-                for textureIndex, loops in enumerate(textureVertexMap):
-                    for loopIndex in loops:
-                        if mesh.loops[loopIndex].vertexIndex == vertexIndex:
-                            break
-                    else:
-                        continue
-                    textureVertexIndices[textureIndex] = []
-                    for index, loopIndex in enumerate(loops):
-                        if mesh.loops[loopIndex].vertexIndex == vertexIndex:
-                            textureVertexIndices[textureIndex].append(index)
-                return ((
-                    f'[{textureIndex+1}]={{'
-                    f' {",".join(str(x+1) for x in loops)}'
-                    f'}}'
-                ) for textureIndex, loops in textureVertexIndices.items())
-
-            def generateVertexWeights(vertex: Vertex):
-                return (f'[{group+1}]={round(weight,4)}' for group, weight in vertex.weights.items())
-            return ((
-                f'[{index+1}]={{'
-                f' loops={{'
-                f'  {",".join(generateLoopIndices(index))}'
-                f' }},'
-                f' weights={{'
-                f'  {",".join(generateVertexWeights(vertex))}'
-                f' }}'
-                f'}}'
-            ) for index, vertex in enumerate(mesh.vertices))
-        return (
-            f'return {{'
-            f' modelName="{name}",'
-            f' groupMap={{'
-            f'  {",".join(generateGroupMap(mesh.vertexGroups))}'
-            f' }},'
-            f' textureMap={{'
-            f'  {",".join(generateTextureMap(mesh.textures))}'
-            f' }},'
-            f' vertexData={{'
-            f'  {",".join(generateVertexData(mesh))}'
-            f' }}'
-            f'}}'
-        )
+        # @type [texture:[list of corners using that texture]]
+        figuraVertexMap = [[] for _ in mesh.textures]
+        for face in mesh.faces:
+            for loopIndex in face.loopIndices:
+                figuraVertexMap[face.texture].append(loopIndex)
+                if len(face.loopIndices)==3 and loopIndex == face.loopIndices[len(face.loopIndices)-1]:
+                    figuraVertexMap[face.texture].append(loopIndex)
+        def generateLoopIndices(vertexIndex: int):
+            textureVertexIndices: dict[int, list[int]] = {}
+            for textureIndex, loops in enumerate(figuraVertexMap):
+                for loopIndex in loops:
+                    if mesh.loops[loopIndex].vertexIndex == vertexIndex:
+                        break
+                else:
+                    continue
+                textureVertexIndices[textureIndex] = []
+                for index, loopIndex in enumerate(loops):
+                    if mesh.loops[loopIndex].vertexIndex == vertexIndex:
+                        textureVertexIndices[textureIndex].append(index)
+            return {textureIndex+1:[x+1 for x in loops] for textureIndex, loops in textureVertexIndices.items()}
+        return "return "+LuaParser.toLua({
+            "modelName":name,
+            "groupMap":{groupName:groupIndex+1 for groupName, groupIndex in mesh.vertexGroups.items()},
+            "textureMap":[texture.name for texture in mesh.textures],
+            "vertexData":[{
+              "loops":generateLoopIndices(index),
+              "weights":{group+1:round(weight,4) for group, weight in vertex.weights.items()} if len(vertex.weights)!=0 else None
+            } for index,vertex in enumerate(mesh.vertices)]
+        })
     return (generateBBModel(mesh), generateMeshData(name, mesh))
 
 
