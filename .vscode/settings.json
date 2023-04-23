@@ -4,5 +4,11 @@
   ],
   "python.analysis.extraPaths": [
     "${workspaceFolder}/.vscode/docs/fake-bpy-module-3.4-20230117"
-  ]
+  ],
+  "python.linting.enabled": true,
+  "python.analysis.typeCheckingMode": "off",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "python.formatting.provider": "none"
 }

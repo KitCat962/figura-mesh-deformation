@@ -31,7 +31,7 @@ class Vertex:
     pos: BlVector
     weights: dict[int, float]
 
-    def __init__(self, pos: tuple[float, float, float], weights: dict[int, float]) -> None:
+    def __init__(self, pos: BlVector, weights: dict[int, float]) -> None:
         self.pos = pos
         self.weights = weights
 
@@ -64,9 +64,11 @@ class Bone:
         self.pos = pos
         self.children = children
 
+    @staticmethod
     def parseArmature(armature: BlArmature) -> list['Bone']:
         return [Bone.parseBone(bone) for bone in armature.bones if bone.parent == None]
 
+    @staticmethod
     def parseBone(bone: BlBone) -> 'Bone':
         return Bone(fixGroupName(bone.name), fixVector(bone.head_local), [Bone.parseBone(child) for child in bone.children])
 
@@ -79,9 +81,11 @@ class Texture:
         self.name = name
         self.base64 = base64
 
+    @staticmethod
     def parseImage(image: BlImage):
         import os
         filepath = image.filepath
+        markDel=False
         if not os.path.exists(filepath):
             filepath = bpy.path.abspath(f"//{image.name}")
             image.save(filepath=filepath)
@@ -94,6 +98,7 @@ class Texture:
             os.remove(filepath)
         return Texture(image.name, f'data:image/png;base64,{data}')
 
+    @staticmethod
     def parseMaterial(material: BlMaterial):
         matOutputNode = material.node_tree.get_output_node('ALL')
         shaderNode = None
@@ -131,28 +136,17 @@ class Texture:
 
 
 class Mesh:
-    name: str
-    uuid: str
     vertices: list[Vertex]
     loops: list[Loop]
     faces: list[Face]
-    textures: list[Texture]
-    bones: list[Bone]
-    vertexGroups: dict[str, int]
 
-    def __init__(self, name: str, uuid: str, vertices: list[Vertex], loops: list[Loop], faces: list[Face], textures: list[Texture], bones: list[Bone], vertexGroups: dict[str, int]):
-        self.name = name
-        self.uuid = uuid
+    def __init__(self, vertices: list[Vertex], loops: list[Loop], faces: list[Face]):
         self.vertices = vertices
         self.loops = loops
         self.faces = faces
-        self.textures = textures
-        self.bones = bones
-        self.vertexGroups = vertexGroups
 
-    def parseMesh(meshObj: BlObject) -> 'Mesh':
-        from uuid import uuid4
-        mesh: BlMesh = meshObj.data
+    @staticmethod
+    def parseMesh(mesh: BlMesh) -> 'Mesh':
         uvs = mesh.uv_layers[0].data
         loops=[]
         for loop in mesh.loops:
@@ -162,20 +156,41 @@ class Mesh:
                   break
                     
         return Mesh(
-            fixGroupName(meshObj.name),
-            str(uuid4()),
-            [Vertex(fixVector(vertex.co),
-                    {group.group: group.weight for group in vertex.groups if group.weight>=0.0001}) for vertex in mesh.vertices],
+            [Vertex(fixVector(vertex.co), {group.group: group.weight for group in vertex.groups if group.weight>=0.0001}) for vertex in mesh.vertices],
             loops,
-            [Face(face.material_index, [i for i in face.loop_indices])
-             for face in mesh.polygons if face.loop_total in {3,4}],
-            [Texture.parseMaterial(
-                materialSlot.material) for materialSlot in meshObj.material_slots],
-            Bone.parseArmature(meshObj.find_armature().data),
-            {fixGroupName(group.name)             : group.index for group in meshObj.vertex_groups}
+            [Face(face.material_index, [i for i in face.loop_indices]) for face in mesh.polygons if face.loop_total in {3,4}]
+        )
+    
+class Object:
+    name: str
+    uuid: str
+    mesh:Mesh
+    textures: list[Texture]
+    bones: list[Bone]
+    vertexGroups: dict[str, int]
+    
+    def __init__(self, name:str,uuid:str,mesh:Mesh,textures:list[Texture],bones:list[Bone],vertexGroups:dict[str,int]):
+        self.name=name
+        self.uuid=uuid
+        self.mesh=mesh
+        self.textures=textures
+        self.bones=bones
+        self.vertexGroups=vertexGroups
+
+    @staticmethod
+    def parseObject(obj:BlObject) -> 'Object':
+        from uuid import uuid4
+        return Object(
+            fixGroupName(obj.name),
+            str(uuid4()),
+            Mesh.parseMesh(obj.data),
+            [Texture.parseMaterial(materialSlot.material) for materialSlot in obj.material_slots],
+            Bone.parseArmature(obj.find_armature().data),
+            {fixGroupName(group.name) : group.index for group in obj.vertex_groups}
         )
 
 class JsonParser:
+    @staticmethod
     def toJson(obj:'Any'):
         match obj:
             case dict():
@@ -199,9 +214,11 @@ class JsonParser:
                 raise TypeError(f'Unknown type:"{type(obj)}" ({obj})')
 class LuaParser:
     keywords=["and","break","do","else","elseif","end","false","for","function","if","in","local","nil","not","or","repeat","return","then","true","until","while"]
+    @staticmethod
     def isValidName(s:str):
         import re
         return bool(type(s) is str and re.search(r'^[a-zA-Z0-9_]+$', s) and not s.startswith(('0','1','2','3','4','5','6','7','8','9')) and not any(s==k for k in LuaParser.keywords))
+    @staticmethod
     def toLua(obj:'Any'):
         match obj:
             case dict():
@@ -222,8 +239,8 @@ class LuaParser:
             case _:
                 raise TypeError(f'Unknown type:"{type(obj)}" ({obj})')
         
-def generateAvatar(name: str, mesh: Mesh):
-    def generateBBModel(mesh: Mesh):
+def generateAvatar(name: str, obj: Object):
+    def generateBBModel(obj: Object):
         def generateGroup(bone: Bone):
             return {
                 "name":bone.name,
@@ -250,36 +267,36 @@ def generateAvatar(name: str, mesh: Mesh):
                   vert.pos.x,
                   vert.pos.y,
                   vert.pos.z
-                ] for i, vert in enumerate(mesh.vertices)
+                ] for i, vert in enumerate(obj.mesh.vertices)
               },
               "faces":{
                 str(i):{
-                  "vertices":[str(mesh.loops[loop].vertexIndex) for loop in face.loopIndices],
+                  "vertices":[str(obj.mesh.loops[loop].vertexIndex) for loop in face.loopIndices],
                   "uv":{
-                    str(mesh.loops[loop].vertexIndex):[
-                      mesh.loops[loop].uv[0],
-                      mesh.loops[loop].uv[1]
+                    str(obj.mesh.loops[loop].vertexIndex):[
+                      obj.mesh.loops[loop].uv[0],
+                      obj.mesh.loops[loop].uv[1]
                     ] for loop in face.loopIndices
                   },
                   "texture":face.texture
-                } for i, face in enumerate(mesh.faces)
+                } for i, face in enumerate(obj.mesh.faces)
               },
               "type":"mesh",
-              "uuid":mesh.uuid
+              "uuid":obj.uuid
             }],
-            "outliner":[generateGroup(bone) for bone in mesh.bones],
+            "outliner":[generateGroup(bone) for bone in obj.bones],
             "textures":[{
               "name":texture.name,
               "source":texture.base64
-            } for texture in mesh.textures]
+            } for texture in obj.textures]
         }
-        bbmodel["outliner"].append(mesh.uuid)
+        bbmodel["outliner"].append(obj.uuid)
         return JsonParser.toJson(bbmodel)
 
-    def generateMeshData(name: str, mesh: Mesh):
+    def generateMeshData(name: str, obj: Object):
         # @type [texture:[list of corners using that texture]]
-        figuraVertexMap = [[] for _ in mesh.textures]
-        for face in mesh.faces:
+        figuraVertexMap = [[] for _ in obj.textures]
+        for face in obj.mesh.faces:
             for loopIndex in face.loopIndices:
                 figuraVertexMap[face.texture].append(loopIndex)
                 if len(face.loopIndices)==3 and loopIndex == face.loopIndices[len(face.loopIndices)-1]:
@@ -288,25 +305,25 @@ def generateAvatar(name: str, mesh: Mesh):
             textureVertexIndices: dict[int, list[int]] = {}
             for textureIndex, loops in enumerate(figuraVertexMap):
                 for loopIndex in loops:
-                    if mesh.loops[loopIndex].vertexIndex == vertexIndex:
+                    if obj.mesh.loops[loopIndex].vertexIndex == vertexIndex:
                         break
                 else:
                     continue
                 textureVertexIndices[textureIndex] = []
                 for index, loopIndex in enumerate(loops):
-                    if mesh.loops[loopIndex].vertexIndex == vertexIndex:
+                    if obj.mesh.loops[loopIndex].vertexIndex == vertexIndex:
                         textureVertexIndices[textureIndex].append(index)
             return {textureIndex+1:[x+1 for x in loops] for textureIndex, loops in textureVertexIndices.items()}
         return "return "+LuaParser.toLua({
             "modelName":name,
-            "groupMap":{groupName:groupIndex+1 for groupName, groupIndex in mesh.vertexGroups.items()},
-            "textureMap":[texture.name for texture in mesh.textures],
+            "groupMap":{groupName:groupIndex+1 for groupName, groupIndex in obj.vertexGroups.items()},
+            "textureMap":[texture.name for texture in obj.textures],
             "vertexData":[{
               "loops":generateLoopIndices(index),
               "weights":{group+1:round(weight,4) for group, weight in vertex.weights.items()} if len(vertex.weights)!=0 else None
-            } for index,vertex in enumerate(mesh.vertices)]
+            } for index,vertex in enumerate(obj.mesh.vertices)]
         })
-    return (generateBBModel(mesh), generateMeshData(name, mesh))
+    return (generateBBModel(obj), generateMeshData(name, obj))
 
 
 class ExportFiguraAvatar(BlOperator, ExportHelper):
@@ -344,7 +361,7 @@ class ExportFiguraAvatar(BlOperator, ExportHelper):
         import os
         directory, file = os.path.split(self.filepath)
         filename = os.path.splitext(file)[0]
-        bbmodel, meshdata = generateAvatar(filename, Mesh.parseMesh(meshObj))
+        bbmodel, meshdata = generateAvatar(filename, Object.parseObject(meshObj))
 
         with open(os.path.join(directory, f'{filename}.bbmodel'), 'w') as file:
             file.write(bbmodel)
