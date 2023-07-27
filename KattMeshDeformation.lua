@@ -9,11 +9,11 @@ return function(meshData)
       end
     end
   end
-  local modelName, vertexData, textureMap = meshData.modelName, meshData.vertexData, meshData.textureMap
+  local modelName, vertexData, groupMap, textureMap = meshData.modelName, meshData.vertexData, meshData.groupMap, meshData.textureMap
   local model = models[modelName]
   local figuraVertices = model.Mesh:getAllVertices()
   local vertices = {}
-  local modelTextureFString = ("%s.%s"):format(modelName, "%s")
+  local modelTextureFString = modelName..".%s"
   for index, data in ipairs(vertexData) do
     local vertex = {}
     local vertexObjects = {}
@@ -42,7 +42,7 @@ return function(meshData)
   local boneTree = {}
   do
     local function generateBoneTree(modelPart, parentIndex)
-      local groupIndex = meshData.groupMap[modelPart:getName()]
+      local groupIndex = groupMap[modelPart:getName()]
       if groupIndex then
         local a = {
           parent = parentIndex,
