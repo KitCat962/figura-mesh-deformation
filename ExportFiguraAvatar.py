@@ -36,7 +36,7 @@ def fixUV(uv: tuple[float, float]) -> tuple[float, float]:
     return (uv[0], 1 - uv[1])
 
 def fixAngle(angle,*,rad=False):
-    x,y,z=-angle[0],-angle[1],-angle[2]
+    x,y,z=angle[0],-angle[1],-angle[2]
     if rad:
         x,y,z=math.degrees(x),math.degrees(y),math.degrees(z)
     return(x,y,z)
@@ -198,6 +198,7 @@ class Mesh:
                 if face.loop_total in {3, 4}
             ],
         )
+
 class Keyframe:
     from typing import Literal
     type:Literal["position","rotation","scale"]
@@ -209,7 +210,7 @@ class Keyframe:
         self.bone=bone
         self.time=time
         self.data=data
-
+# unused. Blender animations are too difficult to convert to blockbench.
 class Animation:
     name:str
     length:float
@@ -240,7 +241,7 @@ class Animation:
         for curve in action.fcurves:
             bone,type=re.match(r"^pose.bones\[\"(.+)\"\]\.(.+)$", curve.data_path).groups()
             if not data.get(bone): 
-                data[bone]={frame:{"pos":[0,0,0],"rotE":[0,0,0],"rotQ":[1,0,0,0],"scale":[1,1,1]} for frame in range(math.floor(action.frame_range[1])+1)}
+                data[bone]={frame:{"pos":[0,0,0],"rot":[0,0,0],"scale":[1,1,1]} for frame in range(math.floor(action.frame_range[1])+1)}
             match type:
               case "location":
                   for frame, d in data[bone].items():
@@ -250,10 +251,9 @@ class Animation:
                     d["scale"][curve.array_index]=curve.evaluate(frame)
               case "rotation_euler":
                   for frame, d in data[bone].items():
-                    d["rotE"][curve.array_index]=curve.evaluate(frame)
+                    d["rot"][curve.array_index]=curve.evaluate(frame)
               case "rotation_quaternion":
-                  for frame, d in data[bone].items():
-                    d["rotQ"][curve.array_index]=curve.evaluate(frame)
+                    pass
         keyframes={}
         fps=bpy.context.scene.render.fps / bpy.context.scene.render.fps_base
         for bone, d in data.items():
@@ -264,9 +264,9 @@ class Animation:
                 keyframes[bbBone].append(Keyframe("scale",bbBone,frame/fps,tuple(frameData["scale"])))
                 match armature.pose.bones[bone].rotation_mode:
                     case "QUATERNION":
-                        keyframes[bbBone].append(Keyframe("rotation",bbBone,frame/fps,fixAngle(BlQuaternion(frameData["rotQ"]).to_euler("XYZ"),rad=True)))
+                        raise TypeError("Animated bones cannot use Quaternions")
                     case "XYZ":
-                        keyframes[bbBone].append(Keyframe("rotation",bbBone,frame/fps,fixAngle(frameData["rotE"])))
+                        keyframes[bbBone].append(Keyframe("rotation",bbBone,frame/fps,fixAngle(frameData["rot"], rad=True)))
                     case mode:
                         raise TypeError(f"Bone {bone} uses unsupported rotation mode {mode}. Please change it to either QUATERNION or XYZ")
         return Animation(action.name,action.frame_range[1]/fps,keyframes,fps)
@@ -458,30 +458,30 @@ def generateAvatar(name: str, obj: Object):
                 {"name": texture.name, "source": texture.base64}
                 for texture in obj.textures
             ],
-            "animations":[
-                {
-                  "name":animation.name,
-                  "loop":"once",
-                  "length":animation.length,
-                  "snapping":animation.fps,
-                  "animators":{boneUUIDs[bone]:{
-                      "name":bone,
-                      "type":"bone",
-                      "keyframes":[{
-                          "time":keyframe.time,
-                          "channel":keyframe.type,
-                          "interpolation": "linear",
-                          "data_points":[
-                            {
-                              "x":keyframe.data[0],
-                              "y":keyframe.data[1],
-                              "z":keyframe.data[2],
-                            }
-                          ]
-                      } for keyframe in keyframes]
-                  } for bone, keyframes in animation.keyframes.items()}
-                } for animation in obj.animations
-            ]
+            # "animations":[
+            #     {
+            #       "name":animation.name,
+            #       "loop":"once",
+            #       "length":animation.length,
+            #       "snapping":animation.fps,
+            #       "animators":{boneUUIDs[bone]:{
+            #           "name":bone,
+            #           "type":"bone",
+            #           "keyframes":[{
+            #               "time":keyframe.time,
+            #               "channel":keyframe.type,
+            #               "interpolation": "linear",
+            #               "data_points":[
+            #                 {
+            #                   "x":keyframe.data[0],
+            #                   "y":keyframe.data[1],
+            #                   "z":keyframe.data[2],
+            #                 }
+            #               ]
+            #           } for keyframe in keyframes]
+            #       } for bone, keyframes in animation.keyframes.items()}
+            #     } for animation in obj.animations
+            # ]
         }
         bbmodel["outliner"].append(obj.uuid)
         return JsonParser.toJson(bbmodel)
