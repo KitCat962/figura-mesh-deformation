@@ -693,6 +693,7 @@ def register():
 
 def unregister():
     bpy.utils.unregister_class(ExportFiguraAvatar)
+    bpy.types.TOPBAR_MT_file_export.remove(menu_func)
 
 
 if __name__ == "__main__":
