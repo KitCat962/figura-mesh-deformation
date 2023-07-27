@@ -144,6 +144,8 @@ class Texture:
                 shaderNode = link.from_node
                 break
         if shaderNode is None or shaderNode.bl_idname != "ShaderNodeBsdfPrincipled":
+            if shaderNode and shaderNode.bl_idname == "ShaderNodeTexImage":
+                return Texture.parseImage(textureNode.image)
             img = bpy.data.images.new(f"null_{material.name}", 16, 16)
             color = (1, 0, 1, 1)
             for p in range(0, 16 * 16 * 4, 8):
