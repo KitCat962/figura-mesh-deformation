@@ -605,28 +605,45 @@ def generateAvatar(name: str, obj: Object):
                 for textureIndex, loops in textureVertexIndices.items()
             }
 
-        return "return " + LuaParser.toLua(
-            {
-                "modelName": name,
-                "groupMap": {
-                    groupName: groupIndex + 1
-                    for groupName, groupIndex in obj.vertexGroups.items()
-                },
-                "textureMap": [texture.name for texture in obj.textures],
-                "vertexData": [
-                    {
-                        "loops": generateLoopIndices(index),
-                        "weights": {
-                            group + 1: round(weight, 4)
-                            for group, weight in vertex.weights.items()
-                        }
-                        if len(vertex.weights) != 0
-                        else None,
+        meshData = {
+            "modelName": name,
+            "groupMap": {
+                groupName: groupIndex + 1
+                for groupName, groupIndex in obj.vertexGroups.items()
+            },
+            "textureMap": [texture.name for texture in obj.textures],
+            "vertexData": [
+                {
+                    "loops": generateLoopIndices(index),
+                    "weights": {
+                        group + 1: round(weight, 4)
+                        for group, weight in vertex.weights.items()
                     }
-                    for index, vertex in enumerate(obj.mesh.vertices)
-                ],
-            }
-        )
+                    if len(vertex.weights) != 0
+                    else None,
+                }
+                for index, vertex in enumerate(obj.mesh.vertices)
+            ],
+        }
+
+        allBones = []
+
+        def allBonesRecursive(bone):
+            allBones.append(bone)
+            for b in bone.children:
+                allBonesRecursive(b)
+
+        for b in obj.bones:
+            allBonesRecursive(b)
+
+        missingGroups = [
+            bone for bone in allBones if bone.name not in meshData["groupMap"].keys()
+        ]
+        lastGroupIndex=len(obj.vertexGroups)
+        for i, group in enumerate(missingGroups):
+            meshData["groupMap"][group.name] = lastGroupIndex+i+1
+
+        return "return " + LuaParser.toLua(meshData)
 
     return (generateBBModel(obj), generateMeshData(name, obj))
 
