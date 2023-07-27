@@ -9,11 +9,12 @@ return function(meshData)
       end
     end
   end
-  local modelName, vertexData, groupMap, textureMap = meshData.modelName, meshData.vertexData, meshData.groupMap, meshData.textureMap
+  local modelName, vertexData, groupMap, textureMap =
+      meshData.modelName, meshData.vertexData, meshData.groupMap, meshData.textureMap
   local model = models[modelName]
   local figuraVertices = model.Mesh:setVisible(true):getAllVertices()
   local vertices = {}
-  local modelTextureFString = modelName..".%s"
+  local modelTextureFString = modelName .. ".%s"
   for index, data in ipairs(vertexData) do
     local vertex = {}
     local vertexObjects = {}
@@ -66,19 +67,21 @@ return function(meshData)
   do
     local vec3 = vectors.vec3
     local mat4 = matrices.mat4()
-    function events.render()
-      local boneMats = {}
-      for _, bone in ipairs(boneTree) do
-        boneMats[bone.index] = (boneMats[bone.parent] or mat4) * bone.modelPart:getPositionMatrix()
-      end
-      for _, vertData in ipairs(vertices) do
-        if vertData.groupWeights then
-          local weightSum = vec3()
-          for groupIndex, weight in pairs(vertData.groupWeights) do
-            weightSum = weightSum + (boneMats[groupIndex]:apply(vertData.pos) * weight)
-          end
-          for _, vert in ipairs(vertData.verts) do
-            vert:setPos(weightSum)
+    function events.entity_init()
+      function events.render()
+        local boneMats = {}
+        for _, bone in ipairs(boneTree) do
+          boneMats[bone.index] = (boneMats[bone.parent] or mat4) * bone.modelPart:getPositionMatrix()
+        end
+        for _, vertData in ipairs(vertices) do
+          if vertData.groupWeights then
+            local weightSum = vec3()
+            for groupIndex, weight in pairs(vertData.groupWeights) do
+              weightSum = weightSum + (boneMats[groupIndex]:apply(vertData.pos) * weight)
+            end
+            for _, vert in ipairs(vertData.verts) do
+              vert:setPos(weightSum)
+            end
           end
         end
       end
