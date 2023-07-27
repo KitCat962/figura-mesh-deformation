@@ -509,7 +509,6 @@ def generateAvatar(name: str, obj: Object):
 
         bbmodel = {
             "meta": {"format_version": "4.5", "model_format": "free", "box_uv": False},
-            "name": "KattMeshDeformation",
             "resolution": {"width": 1, "height": 1},
             "outliner": [generateGroup(bone) for bone in obj.bones],
             "elements": [cube for cube in boneCubes],
