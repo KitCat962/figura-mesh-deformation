@@ -1,13 +1,15 @@
-import bpy
+import bpy,math
 from bpy.types import (
     Object as BlObject,
     Mesh as BlMesh,
     Material as BlMaterial,
     Armature as BlArmature,
     Bone as BlBone,
+    Action as BlAction,
+    FCurve as BlFCurve
 )
 from bpy.types import Image as BlImage, Operator as BlOperator
-from mathutils import Vector as BlVector
+from mathutils import Vector as BlVector, Quaternion as BlQuaternion
 from bpy_extras.io_utils import ExportHelper
 
 bl_info = {
@@ -32,6 +34,13 @@ def fixVector(vector: BlVector) -> BlVector:
 
 def fixUV(uv: tuple[float, float]) -> tuple[float, float]:
     return (uv[0], 1 - uv[1])
+
+def fixAngle(angle,*,rad=False):
+    x,y,z=-angle[0],-angle[1],-angle[2]
+    if rad:
+        x,y,z=math.degrees(x),math.degrees(y),math.degrees(z)
+    return(x,y,z)
+    
 
 
 class Vertex:
@@ -63,11 +72,13 @@ class Face:
 
 class Bone:
     name: str
+    uuid: str
     pos: BlVector
     children: list["Bone"]
 
-    def __init__(self, name: str, pos: BlVector, children: list["Bone"]) -> None:
+    def __init__(self, name: str,uuid:str, pos: BlVector, children: list["Bone"]) -> None:
         self.name = name
+        self.uuid=uuid
         self.pos = pos
         self.children = children
 
@@ -77,8 +88,10 @@ class Bone:
 
     @staticmethod
     def parseBone(bone: BlBone) -> "Bone":
+        from uuid import uuid4
         return Bone(
             fixGroupName(bone.name),
+            str(uuid4()),
             fixVector(bone.head_local),
             [Bone.parseBone(child) for child in bone.children],
         )
@@ -96,7 +109,7 @@ class Texture:
     def parseImage(image: BlImage):
         import os
 
-        filepath = image.filepath
+        filepath = bpy.path.abspath(image.filepath)
         markDel = False
         if not os.path.exists(filepath):
             filepath = bpy.path.abspath(f"//{image.name}")
@@ -105,11 +118,11 @@ class Texture:
         data = None
         with open(filepath, "rb") as file:
             from base64 import b64encode
-
             data = b64encode(file.read()).decode()
         if markDel:
             os.remove(filepath)
-        return Texture(image.name, f"data:image/png;base64,{data}")
+        textureName,_=os.path.splitext(bpy.path.ensure_ext(image.name,".png"))
+        return Texture(textureName, f"data:image/png;base64,{data}")
 
     @staticmethod
     def parseMaterial(material: BlMaterial):
@@ -185,15 +198,88 @@ class Mesh:
                 if face.loop_total in {3, 4}
             ],
         )
+class Keyframe:
+    from typing import Literal
+    type:Literal["position","rotation","scale"]
+    bone:str
+    time:float
+    data:tuple[float,float,float]
+    def __init__(self,type,bone,time,data):
+        self.type=type
+        self.bone=bone
+        self.time=time
+        self.data=data
 
+class Animation:
+    name:str
+    length:float
+    keyframes:dict[str,list[Keyframe]]
+    fps:int
+    def __init__(self,name,length,keyframes,fps):
+        self.name=name
+        self.length=length
+        self.keyframes=keyframes
+        self.fps=fps
+    @staticmethod
+    def parseObject(obj:BlObject) -> list['Animation']:
+        animations=[]
+        for track in obj.animation_data.nla_tracks:
+            if len(track.strips)!=1:
+                raise TypeError(f'NLATrack {track.name} has an illegal amount of strips ({len(track.strips)}). Exporter only supports 1 strip per track.')
+            strip = track.strips[0]
+            if strip.type!="CLIP":
+                raise TypeError(f'NLAStrip {strip.name} in NLATrack {track.name} is an unsupported type {strip.type}. Exporter only supports strip with single action (CLIP)')
+            if strip.frame_start!=0:
+                raise ValueError(f'NLAStrip {strip.name} in NLATrack {track.name} must start at frame 0.')
+            animations.append(Animation.parseAction(strip.action,obj))
+        return animations
+    @staticmethod
+    def parseAction(action:BlAction, armature:BlObject) -> 'Animation':
+        import re
+        data={}
+        for curve in action.fcurves:
+            bone,type=re.match(r"^pose.bones\[\"(.+)\"\]\.(.+)$", curve.data_path).groups()
+            if not data.get(bone): 
+                data[bone]={frame:{"pos":[0,0,0],"rotE":[0,0,0],"rotQ":[1,0,0,0],"scale":[1,1,1]} for frame in range(math.floor(action.frame_range[1])+1)}
+            match type:
+              case "location":
+                  for frame, d in data[bone].items():
+                    d["pos"][curve.array_index]=curve.evaluate(frame)
+              case "scale":
+                  for frame, d in data[bone].items():
+                    d["scale"][curve.array_index]=curve.evaluate(frame)
+              case "rotation_euler":
+                  for frame, d in data[bone].items():
+                    d["rotE"][curve.array_index]=curve.evaluate(frame)
+              case "rotation_quaternion":
+                  for frame, d in data[bone].items():
+                    d["rotQ"][curve.array_index]=curve.evaluate(frame)
+        keyframes={}
+        fps=bpy.context.scene.render.fps / bpy.context.scene.render.fps_base
+        for bone, d in data.items():
+            bbBone=fixGroupName(bone)
+            keyframes[bbBone]=[]
+            for frame, frameData in d.items():
+                keyframes[bbBone].append(Keyframe("position",bbBone,frame/fps,tuple(frameData["pos"])))
+                keyframes[bbBone].append(Keyframe("scale",bbBone,frame/fps,tuple(frameData["scale"])))
+                match armature.pose.bones[bone].rotation_mode:
+                    case "QUATERNION":
+                        keyframes[bbBone].append(Keyframe("rotation",bbBone,frame/fps,fixAngle(BlQuaternion(frameData["rotQ"]).to_euler("XYZ"),rad=True)))
+                    case "XYZ":
+                        keyframes[bbBone].append(Keyframe("rotation",bbBone,frame/fps,fixAngle(frameData["rotE"])))
+                    case mode:
+                        raise TypeError(f"Bone {bone} uses unsupported rotation mode {mode}. Please change it to either QUATERNION or XYZ")
+        return Animation(action.name,action.frame_range[1]/fps,keyframes,fps)
+            
 
 class Object:
     name: str
     uuid: str
     mesh: Mesh
     textures: list[Texture]
-    bones: list[Bone]
     vertexGroups: dict[str, int]
+    bones: list[Bone]
+    animations: list[Animation]
 
     def __init__(
         self,
@@ -201,15 +287,17 @@ class Object:
         uuid: str,
         mesh: Mesh,
         textures: list[Texture],
-        bones: list[Bone],
         vertexGroups: dict[str, int],
+        bones: list[Bone],
+        animations: list[Animation],
     ):
         self.name = name
         self.uuid = uuid
         self.mesh = mesh
         self.textures = textures
-        self.bones = bones
         self.vertexGroups = vertexGroups
+        self.bones = bones
+        self.animations=animations
 
     @staticmethod
     def parseObject(obj: BlObject) -> "Object":
@@ -223,8 +311,9 @@ class Object:
                 Texture.parseMaterial(materialSlot.material)
                 for materialSlot in obj.material_slots
             ],
-            Bone.parseArmature(obj.find_armature().data),
             {fixGroupName(group.name): group.index for group in obj.vertex_groups},
+            Bone.parseArmature(obj.find_armature().data),
+            Animation.parseObject(obj.find_armature())
         )
 
 
@@ -295,7 +384,7 @@ class LuaParser:
             case dict():
                 elemets = [
                     (
-                        f"{key}:{LuaParser.toLua(value)}"
+                        f"{key}={LuaParser.toLua(value)}"
                         if LuaParser.isValidName(key)
                         else f"[{LuaParser.toLua(key)}]={LuaParser.toLua(value)}"
                     )
@@ -321,13 +410,15 @@ class LuaParser:
 
 def generateAvatar(name: str, obj: Object):
     def generateBBModel(obj: Object):
+        boneUUIDs={}
         def generateGroup(bone: Bone):
+            boneUUIDs[bone.name]=bone.uuid
             return {
                 "name": bone.name,
+                "uuid": bone.uuid,
                 "origin": [bone.pos.x, bone.pos.y, bone.pos.z],
                 "children": [generateGroup(child) for child in bone.children],
             }
-
         bbmodel = {
             "meta": {"format_version": "4.5", "model_format": "free", "box_uv": False},
             "name": "KattMeshDeformation",
@@ -367,6 +458,30 @@ def generateAvatar(name: str, obj: Object):
                 {"name": texture.name, "source": texture.base64}
                 for texture in obj.textures
             ],
+            "animations":[
+                {
+                  "name":animation.name,
+                  "loop":"once",
+                  "length":animation.length,
+                  "snapping":animation.fps,
+                  "animators":{boneUUIDs[bone]:{
+                      "name":bone,
+                      "type":"bone",
+                      "keyframes":[{
+                          "time":keyframe.time,
+                          "channel":keyframe.type,
+                          "interpolation": "linear",
+                          "data_points":[
+                            {
+                              "x":keyframe.data[0],
+                              "y":keyframe.data[1],
+                              "z":keyframe.data[2],
+                            }
+                          ]
+                      } for keyframe in keyframes]
+                  } for bone, keyframes in animation.keyframes.items()}
+                } for animation in obj.animations
+            ]
         }
         bbmodel["outliner"].append(obj.uuid)
         return JsonParser.toJson(bbmodel)
@@ -458,7 +573,7 @@ class ExportFiguraAvatar(BlOperator, ExportHelper):
         import os
 
         directory, file = os.path.split(self.filepath)
-        filename = os.path.splitext(file)[0]
+        filename,_ = os.path.splitext(file)
         bbmodel, meshdata = generateAvatar(filename, Object.parseObject(meshObj))
 
         with open(os.path.join(directory, f"{filename}.bbmodel"), "w") as file:
