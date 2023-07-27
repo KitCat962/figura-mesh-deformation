@@ -11,7 +11,7 @@ return function(meshData)
   end
   local modelName, vertexData, groupMap, textureMap = meshData.modelName, meshData.vertexData, meshData.groupMap, meshData.textureMap
   local model = models[modelName]
-  local figuraVertices = model.Mesh:getAllVertices()
+  local figuraVertices = model.Mesh:setVisible(true):getAllVertices()
   local vertices = {}
   local modelTextureFString = modelName..".%s"
   for index, data in ipairs(vertexData) do
