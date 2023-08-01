@@ -325,7 +325,7 @@ class Object:
     textures: list[Texture]
     vertexGroups: dict[str, int]
     bones: list[Bone]
-    animations: list[Animation]
+    #animations: list[Animation]
 
     def __init__(
         self,
@@ -335,7 +335,7 @@ class Object:
         textures: list[Texture],
         vertexGroups: dict[str, int],
         bones: list[Bone],
-        animations: list[Animation],
+        #animations: list[Animation],
     ):
         self.name = name
         self.uuid = uuid
@@ -343,7 +343,7 @@ class Object:
         self.textures = textures
         self.vertexGroups = vertexGroups
         self.bones = bones
-        self.animations = animations
+        #self.animations = animations
 
     @staticmethod
     def parseObject(obj: BlObject) -> "Object":
