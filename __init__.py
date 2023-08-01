@@ -359,7 +359,7 @@ class Object:
             ],
             {fixGroupName(group.name): group.index for group in obj.vertex_groups},
             Bone.parseArmature(obj.find_armature().data),
-            Animation.parseObject(obj.find_armature()),
+            # Animation.parseObject(obj.find_armature()),
         )
 
 
