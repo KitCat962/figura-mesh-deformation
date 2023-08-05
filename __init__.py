@@ -349,6 +349,11 @@ class Object:
     def parseObject(obj: BlObject) -> "Object":
         from uuid import uuid4
 
+        vertexGroups={}
+        for group in obj.vertex_groups:
+            if fixGroupName(group.name) in vertexGroups: raise ValueError("Multiple vertex groups with the same name have been detected. Remove the duplicates and try again.")
+            vertexGroups[fixGroupName(group.name)]=group.index
+
         return Object(
             fixGroupName(obj.name),
             str(uuid4()),
@@ -357,7 +362,7 @@ class Object:
                 Texture.parseMaterial(materialSlot.material)
                 for materialSlot in obj.material_slots
             ],
-            {fixGroupName(group.name): group.index for group in obj.vertex_groups},
+            vertexGroups,
             Bone.parseArmature(obj.find_armature().data),
             # Animation.parseObject(obj.find_armature()),
         )
