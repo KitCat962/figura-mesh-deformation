@@ -3,7 +3,7 @@ This plugin is for Blender, allowing for Mesh Deformation in the Figura mod.
 It works by exporting a specifically formatted bbmodel and a lua file containing the vertex data that blockbench does not retain. Both of these files are used within a generic driver script to achieve mesh deformation in Figura.
 
 # Installing the plugin
-Download the [latest release](https://github.com/KitCat962/figura-blender-blockbench-vertexgroups/releases/latest) of this plugin or download the entire repository as a zip file.
+Download the entire repository as a zip file.
 
 In Blender, navigate to Preferences under the Edit tab. Select Add-ons. Top right of the menu is Install. Select the zip you just downloaded. Install Addon.
 
